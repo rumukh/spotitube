@@ -117,6 +117,10 @@ class SpotifyLinkParserTest {
         "spotify:track:",
         "spotify:wombat:$trackId",
         "ftp://open.spotify.com/track/$trackId",
+        // Unicode "letters" are not base62 and must never be echoed back into an outbound URL.
+        "https://open.spotify.com/track/ПТG3Z6ehGkBFwjybzWkR8",
+        "spotify:track:４PTG3Z6ehGkBFwjybzWkR8x",
+        "https://open.spotify.com/track/" + "a".repeat(200),
       )
     for (input in junk) {
       assertNull("expected null for: $input", SpotifyLinkParser.findIn(input))

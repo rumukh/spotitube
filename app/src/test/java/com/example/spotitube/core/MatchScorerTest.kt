@@ -217,6 +217,43 @@ class MatchScorerTest {
   }
 
   @Test
+  fun `title only metadata never auto plays however well a candidate scores`() {
+    // This is what the oEmbed fallback yields when Spotify serves the JavaScript shell with no
+    // Open Graph tags: a title and nothing else. A title cannot tell an original from a cover.
+    val titleOnly = SpotifyTrackMeta(title = "Never Gonna Give You Up", artists = emptyList())
+    val outcome = MatchScorer.best(titleOnly, rickCandidates())
+
+    assertTrue(outcome.insufficientEvidence)
+    assertFalse("must not auto-play on a title alone: ${outcome.best?.explain()}", outcome.confident)
+    // The ranking itself is still useful, it just is not trusted enough to act on.
+    assertEquals("lYBUbBu4W08", outcome.best!!.song.videoId)
+  }
+
+  @Test
+  fun `an artist alone or a duration alone is enough evidence`() {
+    val artistOnly = SpotifyTrackMeta(title = "Never Gonna Give You Up", artists = listOf("Rick Astley"))
+    assertTrue(MatchScorer.best(artistOnly, rickCandidates()).confident)
+
+    val durationOnly =
+      SpotifyTrackMeta(title = "Never Gonna Give You Up", artists = emptyList(), durationSeconds = 214)
+    assertTrue(MatchScorer.best(durationOnly, rickCandidates()).confident)
+  }
+
+  @Test
+  fun `non latin tracks can be matched`() {
+    val japanese =
+      SpotifyTrackMeta(title = "夜に駆ける", artists = listOf("YOASOBI"), durationSeconds = 261)
+    val candidates =
+      listOf(
+        song(videoId = "good", title = "夜に駆ける", artists = listOf("YOASOBI"), duration = 261),
+        song(videoId = "cover", title = "夜に駆ける (Cover)", artists = listOf("Someone Else"), duration = 258, position = 1),
+      )
+    val outcome = MatchScorer.best(japanese, candidates)
+    assertTrue("non-Latin track should match: ${outcome.best?.explain()}", outcome.confident)
+    assertEquals("good", outcome.best!!.song.videoId)
+  }
+
+  @Test
   fun `empty candidate list yields no match`() {
     val outcome = MatchScorer.best(rickAstley, emptyList())
     assertFalse(outcome.confident)

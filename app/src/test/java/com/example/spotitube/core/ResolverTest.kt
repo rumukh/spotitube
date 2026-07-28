@@ -164,6 +164,22 @@ class ResolverTest {
   }
 
   @Test
+  fun `title only spotify metadata opens search instead of auto playing`() = runTest {
+    // Simulates Spotify serving the JavaScript shell: the oEmbed fallback gives a title only.
+    val spotify =
+      object : SpotifyMetadataSource {
+        override suspend fun expandShortLink(link: SpotifyLink): SpotifyLink? = null
+
+        override suspend fun fetchTrack(link: SpotifyLink) =
+          SpotifyTrackMeta(title = "Never Gonna Give You Up", artists = emptyList())
+      }
+    val outcome = SpotitubeResolver(spotify, rickYouTube()).resolve(rickUrl)
+    val search = outcome as? ResolveOutcome.SearchOnYouTubeMusic ?: error("expected search, got $outcome")
+    assertTrue(search.reason, search.reason.contains("title-only"))
+    assertEquals("Never Gonna Give You Up", search.query)
+  }
+
+  @Test
   fun `garbage input is unsupported`() = runTest {
     val resolver = SpotitubeResolver(FakeSpotify(), FakeYouTube())
     for (input in listOf(null, "", "just some words", "https://youtube.com/watch?v=abc")) {

@@ -23,7 +23,8 @@ class HttpSpotifyMetadataSource(
   override suspend fun expandShortLink(link: SpotifyLink): SpotifyLink? =
     withContext(Dispatchers.IO) {
       val finalUrl =
-        runCatching { Http.resolveFinalUrl(link.canonicalUrl, headersFor(userAgents.first())) }.getOrNull()
+        runCatching { Http.resolveFinalUrl(link.canonicalUrl, headersFor(userAgents.first()), SPOTIFY_HOSTS) }
+          .getOrNull()
           ?: return@withContext null
       SpotifyLinkParser.parse(finalUrl)?.takeIf { it.type != SpotifyEntityType.SHORT_LINK }
     }
@@ -31,12 +32,14 @@ class HttpSpotifyMetadataSource(
   override suspend fun fetchTrack(link: SpotifyLink): SpotifyTrackMeta? =
     withContext(Dispatchers.IO) {
       for (userAgent in userAgents) {
-        val response = runCatching { Http.get(link.canonicalUrl, headersFor(userAgent)) }.getOrNull() ?: continue
+        val response =
+          runCatching { Http.get(link.canonicalUrl, headersFor(userAgent), SPOTIFY_HOSTS) }.getOrNull() ?: continue
         if (!response.isSuccessful) continue
         val meta = SpotifyMetaParser.parse(response.body)
         if (meta != null && meta.title.isNotBlank()) return@withContext meta
       }
-      // Degraded last resort: oEmbed always answers but carries the title only, no artist.
+      // Degraded last resort: oEmbed always answers but carries the title only, no artist and no
+      // duration. MatchScorer refuses to auto-play on that, so this can only ever open search.
       oEmbedTitle(link)?.let { return@withContext SpotifyTrackMeta(title = it, artists = emptyList()) }
       null
     }
@@ -44,7 +47,8 @@ class HttpSpotifyMetadataSource(
   private fun oEmbedTitle(link: SpotifyLink): String? {
     val url = "https://open.spotify.com/oembed?url=" +
       java.net.URLEncoder.encode(link.canonicalUrl, "UTF-8")
-    val response = runCatching { Http.get(url, headersFor(userAgents.first())) }.getOrNull() ?: return null
+    val response = runCatching { Http.get(url, headersFor(userAgents.first()), SPOTIFY_HOSTS) }.getOrNull()
+      ?: return null
     if (!response.isSuccessful) return null
     val match = Regex("\"title\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"").find(response.body) ?: return null
     return SpotifyMetaParser.unescapeHtml(match.groupValues[1].replace("\\\"", "\"").replace("\\\\", "\\"))
@@ -59,6 +63,12 @@ class HttpSpotifyMetadataSource(
     )
 
   companion object {
+    /**
+     * A `spotify.link` short URL redirects wherever Spotify points it; refuse to follow it off
+     * Spotify's own domains so a crafted link cannot aim this client at an arbitrary host.
+     */
+    private val SPOTIFY_HOSTS = Http.HostAllowList("spotify.com", "spotify.link", "spotify.app.link", "spoti.fi")
+
     val DEFAULT_USER_AGENTS =
       listOf(
         // Unfurler UA: ~28 KB response, all og:/music: tags present.

@@ -58,6 +58,41 @@ class TextNormalizerTest {
   }
 
   @Test
+  fun `non latin scripts survive normalisation`() {
+    // The old ASCII-only separator class reduced every one of these to the empty string, which
+    // made non-Latin tracks impossible to match at all.
+    val cases =
+      mapOf(
+        "Кино" to "кино",
+        "Гру́ппа крови" to "группа крови",
+        "防弾少年団" to "防弾少年団",
+        "夜に駆ける" to "夜に駆ける",
+        "밤편지" to "밤편지",
+        "Σ' αγαπώ" to "σ αγαπω",
+      )
+    for ((input, expected) in cases) {
+      val actual = TextNormalizer.normalize(input)
+      assertTrue("'$input' normalised to empty", actual.isNotEmpty())
+      assertEquals(input, expected, actual)
+    }
+  }
+
+  @Test
+  fun `non latin titles and artists still compare`() {
+    assertEquals(1.0, TextNormalizer.similarity("夜に駆ける", "夜に駆ける"), 1e-9)
+    assertEquals(1.0, TextNormalizer.similarity("Кино - Группа крови", "Кино — Группа крови"), 1e-9)
+    assertTrue(TextNormalizer.similarity("夜に駆ける", "群青") < 0.2)
+    // A bracketed noise suffix on the YouTube side must not sink a CJK title.
+    assertTrue(TextNormalizer.similarity("夜に駆ける", "夜に駆ける (Official Video)") > 0.9)
+  }
+
+  @Test
+  fun `full width and compatibility forms fold together`() {
+    assertEquals(TextNormalizer.normalize("ＹＯＡＳＯＢＩ"), TextNormalizer.normalize("YOASOBI"))
+    assertEquals(TextNormalizer.normalize("ﬁnale"), TextNormalizer.normalize("finale"))
+  }
+
+  @Test
   fun `clock durations are parsed and junk is rejected`() {
     assertEquals(214, TextNormalizer.parseClockDuration("3:34"))
     assertEquals(158, TextNormalizer.parseClockDuration("2:38"))

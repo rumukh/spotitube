@@ -18,7 +18,7 @@ class InnerTubeMusicSearch : YouTubeMusicSearch {
   override suspend fun searchSongs(query: String): List<YouTubeSong> =
     withContext(Dispatchers.IO) {
       if (query.isBlank()) return@withContext emptyList()
-      val response = runCatching { Http.postJson(ENDPOINT, requestBody(query), HEADERS) }.getOrNull()
+      val response = runCatching { Http.postJson(ENDPOINT, requestBody(query), HEADERS, YOUTUBE_HOSTS) }.getOrNull()
         ?: return@withContext emptyList()
       if (!response.isSuccessful) return@withContext emptyList()
       InnerTubeParser.parseSongs(response.body)
@@ -38,6 +38,8 @@ class InnerTubeMusicSearch : YouTubeMusicSearch {
 
     /** Opaque InnerTube filter meaning "Songs shelf only". */
     private const val SONGS_FILTER_PARAMS = "EgWKAQIIAWoKEAoQAxAEEAkQBQ=="
+
+    private val YOUTUBE_HOSTS = Http.HostAllowList("youtube.com", "google.com", "googleapis.com")
 
     private val HEADERS =
       mapOf(

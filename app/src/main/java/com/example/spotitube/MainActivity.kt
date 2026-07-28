@@ -93,7 +93,8 @@ private fun HomeScreen() {
         when {
           Build.VERSION.SDK_INT < Build.VERSION_CODES.S ->
             Text(
-              "On this Android version Spotitube already appears when you tap a Spotify link.",
+              "On this Android version, tapping a Spotify link should offer Spotitube in the " +
+                "\"Open with\" list. Where it does not, sharing the link to Spotitube always works.",
               style = MaterialTheme.typography.bodySmall,
             )
           linkHandlingEnabled == true ->
@@ -224,6 +225,9 @@ private fun linkHandlingEnabled(context: Context): Boolean? {
 private fun linkHandlingEnabledS(context: Context): Boolean {
   val manager = context.getSystemService(DomainVerificationManager::class.java) ?: return false
   val state = manager.getDomainVerificationUserState(context.packageName) ?: return false
+  // The per-domain selection can read as SELECTED while the app-wide "Open supported links" toggle
+  // is off, so both have to be true before we can claim link taps will reach us.
+  if (!state.isLinkHandlingAllowed) return false
   return state.hostToStateMap.values.any {
     it == DomainVerificationUserState.DOMAIN_STATE_SELECTED ||
       it == DomainVerificationUserState.DOMAIN_STATE_VERIFIED

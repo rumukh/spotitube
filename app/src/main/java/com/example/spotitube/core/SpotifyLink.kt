@@ -52,6 +52,15 @@ object SpotifyLinkParser {
 
   /** Spotify base-62 ids are 22 chars; stay a little tolerant without accepting obvious junk. */
   private const val MIN_ID_LENGTH = 16
+  private const val MAX_ID_LENGTH = 64
+
+  /**
+   * Strictly ASCII base-62. `Char.isLetterOrDigit()` would happily accept Cyrillic or Han
+   * characters, which are never valid Spotify ids and would be sent straight back out in a URL.
+   */
+  private fun isBase62Id(id: String): Boolean =
+    id.length in MIN_ID_LENGTH..MAX_ID_LENGTH &&
+      id.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' }
 
   private val URL_IN_TEXT = Regex("""https?://[^\s<>"'\\\]}]+""", RegexOption.IGNORE_CASE)
   private val URI_IN_TEXT =
@@ -121,7 +130,7 @@ object SpotifyLinkParser {
 
     val type = TYPES[segments[0].lowercase()] ?: return null
     val id = segments[1]
-    if (id.length < MIN_ID_LENGTH || !id.all { it.isLetterOrDigit() }) return null
+    if (!isBase62Id(id)) return null
 
     return SpotifyLink(
       type = type,
@@ -136,7 +145,7 @@ object SpotifyLinkParser {
     if (parts.size < 3) return null
     val type = TYPES[parts[1].lowercase()] ?: return null
     val id = parts[2]
-    if (id.length < MIN_ID_LENGTH || !id.all { it.isLetterOrDigit() }) return null
+    if (!isBase62Id(id)) return null
     return SpotifyLink(
       type = type,
       id = id,

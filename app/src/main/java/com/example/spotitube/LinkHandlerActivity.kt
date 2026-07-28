@@ -23,7 +23,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import com.example.spotitube.core.ResolveOutcome
+import com.example.spotitube.core.LoopGuard
 import com.example.spotitube.core.SpotifyEntityType
+import com.example.spotitube.core.SpotifyLinkParser
 import com.example.spotitube.core.SpotitubeResolver
 import com.example.spotitube.net.HttpSpotifyMetadataSource
 import com.example.spotitube.net.InnerTubeMusicSearch
@@ -49,6 +51,17 @@ class LinkHandlerActivity : ComponentActivity() {
     handle(extractInput())
   }
 
+  /**
+   * A second identical link arriving while the first is still resolving is delivered here rather
+   * than starting a new instance (`Activity not started, intent has been delivered to currently
+   * running top-most instance`). Without this override it would be silently dropped.
+   */
+  override fun onNewIntent(intent: android.content.Intent) {
+    super.onNewIntent(intent)
+    setIntent(intent)
+    handle(extractInput())
+  }
+
   /** Pulls a candidate string out of whichever intent shape delivered us here. */
   private fun extractInput(): String? {
     val data = intent?.dataString
@@ -60,6 +73,17 @@ class LinkHandlerActivity : ComponentActivity() {
 
   private fun handle(input: String?) {
     Log.i(TAG, "INPUT action=${intent?.action} raw=${input?.take(300)}")
+
+    // Belt-and-braces: every launch we make targets an explicit package, so a cycle should be
+    // impossible. If the same link keeps coming back anyway, hand it to a browser and stop.
+    val guardKey = SpotifyLinkParser.findIn(input)?.canonicalUrl ?: input.orEmpty()
+    if (guardKey.isNotEmpty() && loopGuard.recordAndCheck(guardKey, System.currentTimeMillis())) {
+      val report = LaunchIntents.open(this, guardKey, preferredPackage = null)
+      Log.w(TAG, "RESULT outcome=LOOPGUARD $report")
+      finish()
+      return
+    }
+
     lifecycleScope.launch {
       val outcome =
         runCatching { resolver.resolve(input) }
@@ -119,6 +143,9 @@ class LinkHandlerActivity : ComponentActivity() {
     val resolver: SpotitubeResolver by lazy {
       SpotitubeResolver(HttpSpotifyMetadataSource(), InnerTubeMusicSearch())
     }
+
+    /** Shared across instances: the launch mode is `standard`, so every intent builds a new one. */
+    private val loopGuard = LoopGuard()
 
     /** Kept in one place so the UI and tests describe entity types identically. */
     fun describe(type: SpotifyEntityType): String =

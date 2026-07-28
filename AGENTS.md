@@ -263,8 +263,8 @@ RESULT outcome=PLAY started=true target=com.google.android.apps.youtube.music
        videoId=lYBUbBu4W08 score=1.070
 ```
 
-`outcome` is `PLAY` | `SEARCH` | `BOUNCE` | `UNSUPPORTED`; `via` is `preferred-app` |
-`browser-fallback` | `chooser-excluding-self` | `no-handler`.
+`outcome` is `PLAY` | `SEARCH` | `BOUNCE` | `LOOPGUARD` | `UNSUPPORTED`; `via` is
+`preferred-app` | `browser-fallback` | `chooser-excluding-self` | `no-handler`.
 
 The share path works too, and is the one that always works on Android 12+:
 
@@ -319,8 +319,11 @@ adb -s emulator-5554 shell "pm enable --user 0 com.google.android.apps.youtube.m
 
 A physical phone paired over adb will be included, and it **uninstalls both APKs when it
 finishes**, so a later `adb shell am start` fails with
-`Activity class {...} does not exist`. Reinstall after connected tests, and pin a single
-device with `$env:ANDROID_SERIAL='emulator-5554'` when that matters.
+`Activity class {...} does not exist`. Reinstall after connected tests. Pinning works:
+
+```powershell
+$env:ANDROID_SERIAL='emulator-5554'   # verified: restricts the run to the emulator only
+```
 
 ### `launchMode="singleTask"` silently swallows repeat intents
 
@@ -328,6 +331,27 @@ For a one-shot handler activity, `singleTask` makes a second link arriving while
 is still working return `Warning: Activity not started, its current task has been brought
 to the front` — the intent is dropped, and `onNewIntent` is the only way to see it. Use the
 default `standard` launch mode with `noHistory` + `excludeFromRecents` instead.
+
+### …and `standard` still needs `onNewIntent`
+
+Even with `standard`, an *identical* intent (same component, same data) aimed at the
+top-most instance is delivered rather than starting a new one:
+
+```
+Warning: Activity not started, intent has been delivered to currently running top-most instance.
+```
+
+Watch `ActivityTaskManager` in logcat for the result code — `result code=0` means started,
+**`result code=3` means delivered/coalesced**:
+
+```powershell
+adb -s emulator-5554 logcat -d | Select-String 'ActivityTaskManager.*START.*<yourpkg>'
+```
+
+On a *cold* start the coalescing is even stronger: intents that arrive before `onCreate`
+runs are merged into the pending activity record, so four rapid `am start`s produce exactly
+one `onCreate`. To exercise per-intent behaviour, warm the process first and space the fires
+~2 s apart.
 
 ### Checking Android 12+ link handling from the shell
 

@@ -12,8 +12,18 @@ import java.util.Locale
  */
 object TextNormalizer {
 
+  /**
+   * Latin/Greek/Cyrillic combining marks only (U+0300–U+036F). Deliberately *not* `\p{Mn}`: that
+   * would also strip Arabic, Hebrew and Indic vowel marks, which carry meaning.
+   */
   private val DIACRITICS = Regex("\\p{InCombiningDiacriticalMarks}+")
-  private val NON_ALNUM = Regex("[^a-z0-9]+")
+
+  /**
+   * Separator class. Uses Unicode letter/number properties, **not** `[^a-z0-9]` — the ASCII form
+   * silently normalises Cyrillic, Hangul, Han and Kana titles to the empty string, which made
+   * every non-Latin track unmatchable.
+   */
+  private val NON_ALNUM = Regex("[^\\p{L}\\p{N}]+")
 
   /**
    * Suffixes/parentheticals that describe the *same* recording and should be ignored when
@@ -26,6 +36,7 @@ object TextNormalizer {
       "official audio",
       "official lyric video",
       "official visualizer",
+      "official",
       "music video",
       "lyric video",
       "lyrics",
@@ -91,11 +102,16 @@ object TextNormalizer {
     return s.trim()
   }
 
-  /** Lower-cases, removes diacritics, expands `&`, and reduces everything else to single spaces. */
+  /** Lower-cases, removes Latin diacritics, expands `&`, and reduces separators to single spaces. */
   fun normalize(raw: String): String {
-    val folded = Normalizer.normalize(raw, Normalizer.Form.NFD)
-    var s = DIACRITICS.replace(folded, "").lowercase(Locale.ROOT)
+    // NFKC first, so full-width forms, ligatures and other compatibility variants fold together.
+    var s = Normalizer.normalize(raw, Normalizer.Form.NFKC).lowercase(Locale.ROOT)
     s = s.replace("&", " and ").replace("'", "").replace("\u2019", "")
+    // Decompose to peel off accents, then recompose so scripts that decompose into non-mark
+    // components (Hangul jamo) come back to their canonical form.
+    s = Normalizer.normalize(s, Normalizer.Form.NFD)
+    s = DIACRITICS.replace(s, "")
+    s = Normalizer.normalize(s, Normalizer.Form.NFC)
     s = NON_ALNUM.replace(s, " ")
     return s.trim().replace(Regex("\\s+"), " ")
   }

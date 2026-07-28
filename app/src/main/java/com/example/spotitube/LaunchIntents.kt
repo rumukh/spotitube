@@ -82,13 +82,17 @@ object LaunchIntents {
       }
     }
 
-    // A chooser is the only option left; exclude ourselves from it so the user cannot pick
-    // Spotitube and re-enter this same code path.
+    // A chooser is the only option left; exclude every component of ours that could claim the link
+    // so the user cannot pick Spotitube and re-enter this same code path. EXTRA_EXCLUDE_COMPONENTS
+    // is honoured *only* by a chooser intent — putting it on a plain ACTION_VIEW does nothing.
     val chooser =
       Intent.createChooser(viewIntent(uri), null).apply {
         putExtra(
           Intent.EXTRA_EXCLUDE_COMPONENTS,
-          arrayOf(ComponentName(context, LinkHandlerActivity::class.java)),
+          arrayOf(
+            ComponentName(context, LinkHandlerActivity::class.java),
+            ComponentName(context, MainActivity::class.java),
+          ),
         )
         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
       }

@@ -26,7 +26,16 @@ data class ScoredMatch(
 }
 
 /** Outcome of ranking a search result set against the Spotify track. */
-data class MatchOutcome(val best: ScoredMatch?, val confident: Boolean, val ranked: List<ScoredMatch>)
+data class MatchOutcome(
+  val best: ScoredMatch?,
+  val confident: Boolean,
+  val ranked: List<ScoredMatch>,
+  /**
+   * True when the Spotify side gave us nothing but a title. Title alone cannot distinguish an
+   * original from a cover, so auto-play is refused however well a candidate scores.
+   */
+  val insufficientEvidence: Boolean = false,
+)
 
 /**
  * Decides whether a YouTube Music row is *the same recording* as the Spotify track.
@@ -177,11 +186,23 @@ object MatchScorer {
   }
 
   fun best(spotify: SpotifyTrackMeta, candidates: List<YouTubeSong>): MatchOutcome {
-    if (candidates.isEmpty()) return MatchOutcome(null, confident = false, ranked = emptyList())
-    val ranked = candidates.map { score(spotify, it) }.sortedWith(compareByDescending<ScoredMatch> { it.score }.thenBy { it.song.position })
+    // Spotify's page occasionally comes back as a JavaScript shell with no Open Graph tags, and the
+    // oEmbed fallback carries a title and nothing else. A bare title is not enough to tell an
+    // original from a cover, so never auto-play on it — open search and let the user choose.
+    val insufficientEvidence = spotify.artists.isEmpty() && spotify.durationSeconds == null
+    if (candidates.isEmpty()) {
+      return MatchOutcome(null, confident = false, ranked = emptyList(), insufficientEvidence = insufficientEvidence)
+    }
+    val ranked =
+      candidates.map { score(spotify, it) }.sortedWith(compareByDescending<ScoredMatch> { it.score }.thenBy { it.song.position })
     val top = ranked.firstOrNull()
-    val confident = top != null && !top.vetoed && top.score >= CONFIDENCE_THRESHOLD
-    return MatchOutcome(best = top, confident = confident, ranked = ranked)
+    val confident = top != null && !top.vetoed && top.score >= CONFIDENCE_THRESHOLD && !insufficientEvidence
+    return MatchOutcome(
+      best = top,
+      confident = confident,
+      ranked = ranked,
+      insufficientEvidence = insufficientEvidence,
+    )
   }
 
   private fun durationScore(delta: Int?): Double =

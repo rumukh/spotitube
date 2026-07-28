@@ -18,19 +18,50 @@ internal object Http {
   private const val MAX_REDIRECTS = 6
   private const val MAX_BODY_BYTES = 4 * 1024 * 1024
 
+  /**
+   * Registrable suffixes a request is allowed to reach.
+   *
+   * Short links redirect somewhere we do not control, so without this a crafted `spotify.link`
+   * could aim our client at an arbitrary host. `null` means "no restriction".
+   */
+  class HostAllowList(private vararg val suffixes: String) {
+    fun allows(host: String): Boolean {
+      val h = host.lowercase()
+      return suffixes.any { h == it || h.endsWith(".$it") }
+    }
+
+    override fun toString(): String = suffixes.joinToString(",")
+  }
+
   data class Response(val code: Int, val finalUrl: String, val body: String) {
     val isSuccessful: Boolean
       get() = code in 200..299
   }
 
-  fun get(url: String, headers: Map<String, String> = emptyMap()): Response = request("GET", url, headers, null)
+  fun get(url: String, headers: Map<String, String> = emptyMap(), allow: HostAllowList? = null): Response =
+    request("GET", url, headers, null, allow)
 
-  fun postJson(url: String, json: String, headers: Map<String, String> = emptyMap()): Response =
-    request("POST", url, headers + ("Content-Type" to "application/json"), json.toByteArray(Charsets.UTF_8))
+  fun postJson(
+    url: String,
+    json: String,
+    headers: Map<String, String> = emptyMap(),
+    allow: HostAllowList? = null,
+  ): Response =
+    request(
+      "POST",
+      url,
+      headers + ("Content-Type" to "application/json"),
+      json.toByteArray(Charsets.UTF_8),
+      allow,
+    )
 
   /** Follows redirects without downloading bodies; returns the final URL. */
-  fun resolveFinalUrl(url: String, headers: Map<String, String> = emptyMap()): String {
-    var current = url
+  fun resolveFinalUrl(
+    url: String,
+    headers: Map<String, String> = emptyMap(),
+    allow: HostAllowList? = null,
+  ): String {
+    var current = checkHost(url, allow)
     for (hop in 0 until MAX_REDIRECTS) {
       val connection = open(current, "GET", headers)
       connection.instanceFollowRedirects = false
@@ -38,7 +69,7 @@ internal object Http {
         val code = connection.responseCode
         if (code !in 300..399) return current
         val location = connection.getHeaderField("Location") ?: return current
-        current = URL(URL(current), location).toString()
+        current = checkHost(URL(URL(current), location).toString(), allow)
       } finally {
         connection.disconnect()
       }
@@ -46,8 +77,14 @@ internal object Http {
     return current
   }
 
-  private fun request(method: String, url: String, headers: Map<String, String>, body: ByteArray?): Response {
-    var current = url
+  private fun request(
+    method: String,
+    url: String,
+    headers: Map<String, String>,
+    body: ByteArray?,
+    allow: HostAllowList?,
+  ): Response {
+    var current = checkHost(url, allow)
     var lastCode = -1
     for (hop in 0 until MAX_REDIRECTS) {
       val connection = open(current, method, headers)
@@ -62,7 +99,7 @@ internal object Http {
         if (lastCode in 300..399) {
           val location = connection.getHeaderField("Location")
           if (location != null) {
-            current = URL(URL(current), location).toString()
+            current = checkHost(URL(URL(current), location).toString(), allow)
             continue
           }
         }
@@ -79,6 +116,14 @@ internal object Http {
       }
     }
     throw IOException("Too many redirects for $url (last status $lastCode)")
+  }
+
+  /** A redirect off the allow-list is a hard failure, never something we quietly follow. */
+  private fun checkHost(url: String, allow: HostAllowList?): String {
+    if (allow == null) return url
+    val host = URL(url).host ?: throw IOException("No host in $url")
+    if (!allow.allows(host)) throw IOException("Refusing to follow $host (allowed: $allow)")
+    return url
   }
 
   private fun open(url: String, method: String, headers: Map<String, String>): HttpURLConnection {
