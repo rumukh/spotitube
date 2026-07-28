@@ -254,17 +254,22 @@ Settled decisions, each verifiable rather than taken on trust:
 Settled **implementation** decisions, recorded here for the same reason — these three were
 each re-litigated across several rounds of dropped messages:
 
-* **The settle window is ON at 1,000 ms** (`56edd56`), not zero. Arbitration alone handles
-  every spacing that has been *measured*, and a zero-window test pins that at 0–800 ms so the
-  concurrency suite can never pass merely because a timer masked a race. The window exists for
-  what arbitration provably cannot reach: latest-wins can only suppress an older request once a
-  newer one **exists**, so a resolve that completed and launched at 400 ms is beyond any token.
-  That case is ordinary rather than exotic, because the loop guard deliberately permits a
-  same-link double tap and trips only on the third hit. Note the cost honestly: the wait is
-  `max(resolve, window)`, free at the ~0.8–1.3 s measured device latency but a real regression
-  on a warm 400 ms connection. **The boundary is `[0, 1000]` — inclusive at the top**; 999 and
-  1000 both coalesce, 1001 separates. That was measured, and a confident derivation predicted
-  it backwards, so verify rather than reason if you change the constant.
+* **The settle window defaults to ZERO** (`42447ed`), with the mechanism retained, injectable
+  and fully tested. Arbitration alone handles every spacing that has been *measured*, and a
+  zero-window test pins that at 0–800 ms so the concurrency suite can never pass merely because
+  a timer masked a race. A window can only ever add what arbitration cannot reach — latest-wins
+  suppresses an older request only once a newer one **exists**, so a resolve that already
+  launched at 400 ms is beyond any token — but that shape has never been observed on device,
+  and after a launch the user is in YouTube Music, so tapping again is a deliberate second
+  request. A non-zero default would add dead time on exactly the fast connections where the app
+  would otherwise feel instant. **The boundary, if you ever turn it on, is `[0, window]` —
+  inclusive at the top**; at 1,000 ms both 999 and 1000 coalesce and 1001 separates. That was
+  measured, and a confident derivation predicted it backwards, so verify rather than reason.
+  > **Process note, and it cost a full implement-and-revert cycle.** This shipped at `1_000L`
+  > in `56edd56` because a ruling was relayed to the implementation session **100 minutes
+  > stale** — the reviewer had already moved on. Cross-session relay is not a reliable carrier
+  > for decisions. Put the decision and its reasoning in a commit message or here, and cite the
+  > commit; a decision that exists only in chat will be acted on after it has been reversed.
 * **Album corroborates, never contradicts** (`68e9dbf`). A disagreeing album may not push a
   candidate below the confidence threshold; it may only fail to lift it. Measured on four real
   tracks, album scored 0.00 for **three of four correct matches**, and rejected no wrong one —
