@@ -9,6 +9,10 @@ data class SpotifyTrackMeta(
   val releaseYear: Int? = null,
   /** Raw `og:type`, e.g. `music.song`. Used only as a sanity cross-check. */
   val ogType: String? = null,
+  /** Millisecond duration, available only from the embed payload. Kept for fidelity in logs. */
+  val durationMillis: Int? = null,
+  /** `null` when the source did not tell us. */
+  val isExplicit: Boolean? = null,
 ) {
   val artistLine: String
     get() = artists.joinToString(", ")
@@ -23,6 +27,25 @@ data class SpotifyTrackMeta(
   /** A human-friendly one-liner for logs and the UI. */
   val display: String
     get() = if (artists.isEmpty()) title else "$artistLine — $title"
+
+  /**
+   * Fills gaps in this record from [other]. Used to combine the structured embed payload (clean
+   * artist array, millisecond duration, explicit flag) with the canonical page's Open Graph tags,
+   * which are the only place the **album name** appears.
+   */
+  fun mergedWith(other: SpotifyTrackMeta?): SpotifyTrackMeta {
+    if (other == null) return this
+    return copy(
+      title = title.ifBlank { other.title },
+      artists = artists.ifEmpty { other.artists },
+      album = album ?: other.album,
+      durationSeconds = durationSeconds ?: other.durationSeconds,
+      releaseYear = releaseYear ?: other.releaseYear,
+      ogType = ogType ?: other.ogType,
+      durationMillis = durationMillis ?: other.durationMillis,
+      isExplicit = isExplicit ?: other.isExplicit,
+    )
+  }
 }
 
 /**

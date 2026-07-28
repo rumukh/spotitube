@@ -24,6 +24,12 @@ class MatchScorerTest {
       releaseYear = 2018,
     )
 
+  /** Same track, with the album the canonical page reports. */
+  private val sunflowerWithAlbum =
+    sunflower.copy(
+      album = "Spider-Man: Into the Spider-Verse (Soundtrack From & Inspired by the Motion Picture)"
+    )
+
   private fun rickCandidates() = InnerTubeParser.parseSongs(Fixtures.read(Fixtures.RICK_ASTLEY_SEARCH_JSON))
 
   private fun sunflowerCandidates() = InnerTubeParser.parseSongs(Fixtures.read(Fixtures.SUNFLOWER_SEARCH_JSON))
@@ -35,7 +41,133 @@ class MatchScorerTest {
     duration: Int?,
     album: String? = null,
     position: Int = 0,
-  ) = YouTubeSong(videoId, title, artists, album, duration, hasAlbumLink = true, hasArtistChannel = true, position = position)
+    isExplicit: Boolean? = null,
+  ) = YouTubeSong(
+    videoId,
+    title,
+    artists,
+    album,
+    duration,
+    hasAlbumLink = true,
+    hasArtistChannel = true,
+    isExplicit = isExplicit,
+    position = position,
+  )
+
+  // --- album evidence -------------------------------------------------------------------------
+
+  @Test
+  fun `album agreement decides between two uploads of the same recording`() {
+    // The real Sunflower result set contains both: a soundtrack upload at 2:39 (the album Spotify
+    // names) and a Hollywood's Bleeding upload at 2:38 (an exact duration match). Ranking by
+    // smallest duration delta picks the wrong release.
+    val soundtrack =
+      song(
+        videoId = "r7Rn4ryE_w8",
+        title = "Sunflower (Spider-Man: Into the Spider-Verse)",
+        artists = listOf("Post Malone", "Swae Lee"),
+        duration = 159,
+        album = "Spider-Man: Into the Spider-Verse (Soundtrack From & Inspired by the Motion Picture)",
+        position = 1,
+      )
+    val otherRelease =
+      song(
+        videoId = "z9VMaLxg9Ok",
+        title = "Sunflower (Spider-Man: Into the Spider-Verse)",
+        artists = listOf("Post Malone", "Swae Lee"),
+        duration = 158,
+        album = "Hollywood's Bleeding",
+        position = 0,
+      )
+
+    // YouTube's own ordering is deliberately reversed here and the exact duration sits on the wrong
+    // album, so only album evidence can produce the right answer.
+    val outcome = MatchScorer.best(sunflowerWithAlbum, listOf(otherRelease, soundtrack))
+    assertTrue(outcome.confident)
+    assertEquals("r7Rn4ryE_w8", outcome.best!!.song.videoId)
+  }
+
+  @Test
+  fun `a mismatched album never rejects an otherwise good match`() {
+    // The same recording is legitimately reissued on compilations, so album disagreement is only an
+    // absence of corroboration, never a veto.
+    val compilation =
+      song(
+        title = "Never Gonna Give You Up",
+        artists = listOf("Rick Astley"),
+        duration = 214,
+        album = "Greatest Hits of the 80s",
+      )
+    val match = MatchScorer.score(rickAstley, compilation)
+    assertFalse(match.explain(), match.vetoed)
+    assertTrue(match.score >= MatchScorer.CONFIDENCE_THRESHOLD)
+  }
+
+  // --- explicit / clean -----------------------------------------------------------------------
+
+  @Test
+  fun `explicit badges are read from the live search response`() {
+    val songs = InnerTubeParser.parseSongs(Fixtures.read(Fixtures.EXPLICIT_SEARCH_JSON))
+    assertEquals(true, songs.first { it.videoId == "AaxFIY-cWH0" }.isExplicit)
+    // No badges array at all means "not stated", not "clean".
+    assertEquals(null, songs.first { it.videoId == "Moye-xEc_x8" }.isExplicit)
+  }
+
+  @Test
+  fun `the matching explicitness wins when two candidates are otherwise identical`() {
+    val explicitTrack =
+      SpotifyTrackMeta(
+        title = "rockstar",
+        artists = listOf("Post Malone"),
+        durationSeconds = 218,
+        isExplicit = true,
+      )
+    val cleanVersion =
+      song(videoId = "clean", title = "rockstar", artists = listOf("Post Malone"), duration = 218, isExplicit = false)
+    val explicitVersion =
+      song(
+        videoId = "explicit",
+        title = "rockstar",
+        artists = listOf("Post Malone"),
+        duration = 218,
+        position = 1,
+        isExplicit = true,
+      )
+    val outcome = MatchScorer.best(explicitTrack, listOf(cleanVersion, explicitVersion))
+    assertEquals("explicit", outcome.best!!.song.videoId)
+    assertTrue(outcome.confident)
+  }
+
+  @Test
+  fun `an explicitness mismatch alone does not block playback`() {
+    val explicitTrack =
+      SpotifyTrackMeta(title = "rockstar", artists = listOf("Post Malone"), durationSeconds = 218, isExplicit = true)
+    val onlyClean = song(title = "rockstar", artists = listOf("Post Malone"), duration = 218, isExplicit = false)
+    val outcome = MatchScorer.best(explicitTrack, listOf(onlyClean))
+    val best = outcome.best!!
+    assertFalse(best.explain(), best.vetoed)
+    assertTrue("a clean master is still the right song: ${best.explain()}", outcome.confident)
+  }
+
+  // --- unreadable candidate artists -------------------------------------------------------------
+
+  @Test
+  fun `a candidate with no readable artist is never auto played`() {
+    // Karaoke and third-party rows are exactly the ones that come back without an artist endpoint,
+    // and they otherwise look like a perfect match on title and duration.
+    val faceless =
+      YouTubeSong(
+        videoId = "nameless",
+        title = "Never Gonna Give You Up",
+        artists = emptyList(),
+        album = null,
+        durationSeconds = 214,
+      )
+    val match = MatchScorer.score(rickAstley, faceless)
+    assertTrue(match.explain(), match.vetoed)
+    assertTrue(match.vetoes.contains("artist-unknown"))
+    assertEquals(0.0, match.score, 1e-9)
+  }
 
   // --- end-to-end ranking against the real search results ------------------------------------
 

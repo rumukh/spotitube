@@ -21,9 +21,18 @@ object Fixtures {
   /** Same track, captured on a request that came back with U+060C ARABIC COMMA between artists. */
   const val SUNFLOWER_INTL_COMMA_HTML = "spotify_track_sunflower_intlcomma.html"
 
+  /** `open.spotify.com/embed/track/4PTG3Z6ehGkBFwjybzWkR8` — `__NEXT_DATA__` payload. */
+  const val RICK_ASTLEY_EMBED_HTML = "spotify_embed_rickastley.html"
+
+  /** `open.spotify.com/embed/track/3KkXRkHbMCARz0aVfEt68P` — two artists, 158040 ms. */
+  const val SUNFLOWER_EMBED_HTML = "spotify_embed_sunflower.html"
+
   const val ALBUM_HTML = "spotify_album.html"
 
   const val RICK_ASTLEY_SEARCH_JSON = "innertube_rickastley.json"
 
   const val SUNFLOWER_SEARCH_JSON = "innertube_sunflower.json"
+
+  /** A search whose rows carry `MUSIC_EXPLICIT_BADGE`. */
+  const val EXPLICIT_SEARCH_JSON = "innertube_explicit.json"
 }

@@ -18,6 +18,8 @@ data class YouTubeSong(
   val hasAlbumLink: Boolean = false,
   /** True when the artist run links to an artist channel rather than a plain user channel. */
   val hasArtistChannel: Boolean = false,
+  /** True when the row is badged explicit; `null` when the shape did not tell us. */
+  val isExplicit: Boolean? = null,
   /** Zero-based rank in YouTube's own ordering; used only to break otherwise-equal scores. */
   val position: Int = 0,
 ) {
@@ -165,8 +167,22 @@ object InnerTubeParser {
       durationSeconds = duration,
       hasAlbumLink = hasAlbumLink,
       hasArtistChannel = hasArtistChannel,
+      isExplicit = explicitBadge(item),
       position = position,
     )
+  }
+
+  /**
+   * `badges[].musicInlineBadgeRenderer.icon.iconType == "MUSIC_EXPLICIT_BADGE"`.
+   *
+   * A row that carries a `badges` array without the explicit icon is known-clean; a row with no
+   * `badges` key at all tells us nothing, so it stays `null` rather than claiming "clean".
+   */
+  private fun explicitBadge(item: JsonElement): Boolean? {
+    val badges = item.arr("badges").ifEmpty { return null }
+    return badges.any {
+      it.obj("musicInlineBadgeRenderer").obj("icon").str("iconType") == "MUSIC_EXPLICIT_BADGE"
+    }
   }
 
   /** YouTube Music joins collaborating artists with `,` and `&`, unlike Spotify which uses `,` only. */

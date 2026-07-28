@@ -231,9 +231,12 @@ links; opening them plays ads. Spotitube intercepts a Spotify **track** link, fi
 recording on YouTube Music, and launches it playing. Albums / playlists / artists / shows /
 episodes are bounced straight back to Spotify.
 
-No API keys, no OAuth, no accounts. Two public endpoints only:
+No API keys, no OAuth, no accounts. Three public endpoints only:
 
-* `GET https://open.spotify.com/track/{id}` → Open Graph `<meta>` tags.
+* `GET https://open.spotify.com/embed/track/{id}` → `__NEXT_DATA__` JSON (structured artists,
+  millisecond duration, explicit flag) — **no album**.
+* `GET https://open.spotify.com/track/{id}` → Open Graph `<meta>` tags — the only source of the
+  **album name**. Fetched concurrently with the embed and merged.
 * `POST https://music.youtube.com/youtubei/v1/search` (InnerTube, `WEB_REMIX` client,
   `params=EgWKAQIIAWoKEAoQAxAEEAkQBQ==` to restrict to the Songs shelf).
 
@@ -364,12 +367,44 @@ they still appear under *Selection state* and can be enabled from
 `Settings.ACTION_APP_OPEN_BY_DEFAULT_SETTINGS`. That is the right value for a domain you do
 not own, and it clears lint's `AppLinkWarning`.
 
-### Spotify's HTML depends on the User-Agent
+### Spotify metadata: two endpoints, neither sufficient alone
 
-A **desktop Chrome** UA gets a ~6 KB JavaScript shell with *no* `og:`/`music:` tags at all.
-A link-unfurler UA (`facebookexternalhit/1.1`) gets ~28 KB fully server-rendered; a mobile
-Chrome UA gets ~139 KB, also server-rendered. Send `Accept-Language: en-US` too — without it
+`GET https://open.spotify.com/embed/track/{id}` (~10 KB) serves a
+`<script id="__NEXT_DATA__" type="application/json">` island with
+`props.pageProps.state.data.entity`:
+
+```
+name / title   "Never Gonna Give You Up"
+artists[].name ["Post Malone", "Swae Lee"]   <- a real array, no separator guessing
+duration       213573                        <- milliseconds
+isExplicit     false
+releaseDate    { isoString: "1987-11-12T00:00:00Z" }
+```
+
+**It has no album name.** The album appears only in `og:description` on the canonical
+`/track/{id}` page (`Artist · Album · Song · Year`), and the album is what disambiguates two
+YouTube uploads of the same recording on different releases. So Spotitube fetches **both
+concurrently and merges** — embed for the structured fields, Open Graph for the album.
+
+The canonical page is also UA- and CDN-variable: a **desktop Chrome** UA has been observed
+returning a ~6 KB JavaScript shell with no `og:`/`music:` tags at all, while
+`facebookexternalhit/1.1` (~28 KB), a mobile Chrome UA (~139 KB) and a plain
+`Spotitube/1.0 (+Android)` all get the server-rendered page. Repeated probes from a desktop
+browser alternated between shell and rich, so treat it as unstable rather than
+UA-deterministic and keep a fallback chain. Send `Accept-Language: en-US` too — without it
 one capture came back with U+060C ARABIC COMMA separating the artists.
+
+`https://open.spotify.com/oembed?url=…` always answers but returns the **title only**, which
+is not enough to tell an original from a cover — it can open search, never auto-play.
+
+### YouTube Music explicit badges
+
+```
+musicResponsiveListItemRenderer.badges[]
+  .musicInlineBadgeRenderer.icon.iconType == "MUSIC_EXPLICIT_BADGE"
+```
+
+Absent `badges` means "not stated", not "clean".
 
 ### Gradle notes
 

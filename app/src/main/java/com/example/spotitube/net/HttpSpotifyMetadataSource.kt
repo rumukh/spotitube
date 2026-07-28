@@ -1,5 +1,6 @@
 package com.example.spotitube.net
 
+import com.example.spotitube.core.SpotifyEmbedParser
 import com.example.spotitube.core.SpotifyEntityType
 import com.example.spotitube.core.SpotifyLink
 import com.example.spotitube.core.SpotifyLinkParser
@@ -7,14 +8,24 @@ import com.example.spotitube.core.SpotifyMetaParser
 import com.example.spotitube.core.SpotifyMetadataSource
 import com.example.spotitube.core.SpotifyTrackMeta
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 
 /**
- * Reads Spotify track metadata from the public `open.spotify.com` page. No API key, no OAuth.
+ * Reads Spotify track metadata from public `open.spotify.com` pages. No API key, no OAuth.
  *
- * User-Agent matters: verified on 2026-07-28 that a **desktop Chrome** UA gets a ~6 KB JavaScript
- * shell with no Open Graph tags at all, while link-unfurler and mobile UAs get the server-rendered
- * page. We therefore try a short list of UAs and stop at the first that yields a parsable title.
+ * Two independent sources are fetched **concurrently** and merged, because neither is sufficient
+ * on its own:
+ *
+ * * `/embed/track/{id}` serves a `__NEXT_DATA__` JSON island — structured artists (no separator
+ *   guessing), millisecond duration, and an explicit flag. It has no album name.
+ * * the canonical `/track/{id}` page's Open Graph tags are the only place the **album** appears,
+ *   which is what disambiguates two uploads of the same recording on different releases.
+ *
+ * The canonical page is also UA- and CDN-variable: a desktop Chrome UA has been observed getting a
+ * ~6 KB JavaScript shell with no tags at all, so a short list of user agents is tried in turn.
+ * Both sources are undocumented, so either may return nothing and the merge simply degrades.
  */
 class HttpSpotifyMetadataSource(
   private val userAgents: List<String> = DEFAULT_USER_AGENTS,
@@ -31,18 +42,43 @@ class HttpSpotifyMetadataSource(
 
   override suspend fun fetchTrack(link: SpotifyLink): SpotifyTrackMeta? =
     withContext(Dispatchers.IO) {
-      for (userAgent in userAgents) {
-        val response =
-          runCatching { Http.get(link.canonicalUrl, headersFor(userAgent), SPOTIFY_HOSTS) }.getOrNull() ?: continue
-        if (!response.isSuccessful) continue
-        val meta = SpotifyMetaParser.parse(response.body)
-        if (meta != null && meta.title.isNotBlank()) return@withContext meta
+      coroutineScope {
+        val embedDeferred = async { fetchEmbed(link) }
+        val openGraphDeferred = async { fetchOpenGraph(link) }
+        val embed = embedDeferred.await()
+        val openGraph = openGraphDeferred.await()
+
+        // Prefer the structured payload, then fill the album (and anything missing) from the tags.
+        val merged = embed?.mergedWith(openGraph) ?: openGraph
+        if (merged != null && merged.title.isNotBlank()) return@coroutineScope merged
+
+        // Degraded last resort: oEmbed always answers but carries the title only, no artist and no
+        // duration. MatchScorer refuses to auto-play on that, so this can only ever open search.
+        oEmbedTitle(link)?.let { SpotifyTrackMeta(title = it, artists = emptyList()) }
       }
-      // Degraded last resort: oEmbed always answers but carries the title only, no artist and no
-      // duration. MatchScorer refuses to auto-play on that, so this can only ever open search.
-      oEmbedTitle(link)?.let { return@withContext SpotifyTrackMeta(title = it, artists = emptyList()) }
-      null
     }
+
+  private fun fetchEmbed(link: SpotifyLink): SpotifyTrackMeta? {
+    val id = link.id ?: return null
+    val url = "https://open.spotify.com/embed/track/$id"
+    for (userAgent in userAgents) {
+      val response = runCatching { Http.get(url, headersFor(userAgent), SPOTIFY_HOSTS) }.getOrNull() ?: continue
+      if (!response.isSuccessful) continue
+      SpotifyEmbedParser.parse(response.body)?.let { return it }
+    }
+    return null
+  }
+
+  private fun fetchOpenGraph(link: SpotifyLink): SpotifyTrackMeta? {
+    for (userAgent in userAgents) {
+      val response =
+        runCatching { Http.get(link.canonicalUrl, headersFor(userAgent), SPOTIFY_HOSTS) }.getOrNull() ?: continue
+      if (!response.isSuccessful) continue
+      val meta = SpotifyMetaParser.parse(response.body)
+      if (meta != null && meta.title.isNotBlank()) return meta
+    }
+    return null
+  }
 
   private fun oEmbedTitle(link: SpotifyLink): String? {
     val url = "https://open.spotify.com/oembed?url=" +
@@ -71,7 +107,9 @@ class HttpSpotifyMetadataSource(
 
     val DEFAULT_USER_AGENTS =
       listOf(
-        // Unfurler UA: ~28 KB response, all og:/music: tags present.
+        // Truthful and currently served rich data by both endpoints.
+        "Spotitube/1.0 (+Android)",
+        // Unfurler UA: ~28 KB canonical response, all og:/music: tags present.
         "facebookexternalhit/1.1",
         // Mobile Chrome: ~139 KB but also fully server-rendered — independent fallback.
         "Mozilla/5.0 (Linux; Android 14; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) " +

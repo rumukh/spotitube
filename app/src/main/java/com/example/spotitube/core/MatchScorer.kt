@@ -9,6 +9,7 @@ data class ScoredMatch(
   val titleScore: Double,
   val artistScore: Double,
   val durationScore: Double,
+  val albumScore: Double,
   val vetoes: List<String>,
   val notes: List<String>,
 ) {
@@ -16,11 +17,12 @@ data class ScoredMatch(
     get() = vetoes.isNotEmpty()
 
   fun explain(): String =
-    "score=%.3f (t=%.2f a=%.2f d=%.2f)%s".format(
+    "score=%.3f (t=%.2f a=%.2f d=%.2f al=%.2f)%s".format(
       score,
       titleScore,
       artistScore,
       durationScore,
+      albumScore,
       if (vetoed) " VETO[${vetoes.joinToString("|")}]" else "",
     )
 }
@@ -70,9 +72,22 @@ object MatchScorer {
   /** Beyond this many seconds apart it is simply not the same recording. */
   const val MAX_DURATION_DELTA_SECONDS = 12
 
-  private const val PERFECT_DURATION_DELTA_SECONDS = 2
+  /**
+   * Durations inside this bucket are treated as equally good rather than ranked by raw delta.
+   *
+   * This matters: for "Sunflower" the exact-duration candidate (2:38) sits on *Post Malone's own
+   * album* while the +1 s candidate (2:39) sits on the soundtrack album Spotify names. Ranking by
+   * smallest delta picks the wrong release; album evidence has to be what separates them.
+   */
+  private const val PERFECT_DURATION_DELTA_SECONDS = 3
   private const val DURATION_ZERO_AT_SECONDS = 15
   private const val MIN_ARTIST_SCORE = 0.25
+
+  /** Album agreement is corroboration, never a requirement — the same recording is often reissued. */
+  private const val ALBUM_BONUS = 0.06
+
+  private const val EXPLICIT_AGREE_BONUS = 0.02
+  private const val EXPLICIT_DISAGREE_PENALTY = 0.06
 
   /** Unknown duration is neither evidence for nor against; slightly pessimistic. */
   private const val UNKNOWN_DURATION_SCORE = 0.45
@@ -146,6 +161,12 @@ object MatchScorer {
   fun score(spotify: SpotifyTrackMeta, candidate: YouTubeSong): ScoredMatch {
     val titleScore = TextNormalizer.similarity(spotify.title, candidate.title)
     val artistScore = artistScore(spotify.artists, candidate.artists)
+    val albumScore =
+      if (spotify.album != null && candidate.album != null) {
+        TextNormalizer.similarity(spotify.album, candidate.album)
+      } else {
+        0.0
+      }
 
     val spotifyDuration = spotify.durationSeconds
     val candidateDuration = candidate.durationSeconds
@@ -156,18 +177,41 @@ object MatchScorer {
     val notes = ArrayList<String>()
 
     if (delta != null && delta > MAX_DURATION_DELTA_SECONDS) vetoes += "duration±${delta}s"
+    // An unreadable candidate artist is not neutral: karaoke and third-party uploads are exactly
+    // the rows that come back without an artist endpoint, and they otherwise look like a match.
+    if (candidate.artists.isEmpty()) vetoes += "artist-unknown"
     if (artistScore < MIN_ARTIST_SCORE) vetoes += "artist"
     variantMarkers(spotify, candidate).forEach { vetoes += "variant:$it" }
     if (titleScore < 0.34) vetoes += "title"
 
     var raw = WEIGHT_TITLE * titleScore + WEIGHT_ARTIST * artistScore + WEIGHT_DURATION * durationScore
+
+    // Album agreement is the tie-breaker between two uploads of the same recording on different
+    // releases, and it must outweigh YouTube's own ordering.
+    if (albumScore > 0.0) {
+      raw += ALBUM_BONUS * albumScore
+      if (albumScore > 0.8) notes += "album-match"
+    }
     if (candidate.hasAlbumLink) {
-      raw += 0.03
+      raw += 0.02
       notes += "album-link"
     }
     if (candidate.hasArtistChannel) {
       raw += 0.02
       notes += "artist-channel"
+    }
+    // Clean and explicit masters are different recordings; rank the matching one first rather than
+    // rejecting outright, because the two sides disagree often enough that a veto would misfire.
+    val spotifyExplicit = spotify.isExplicit
+    val candidateExplicit = candidate.isExplicit
+    if (spotifyExplicit != null && candidateExplicit != null) {
+      if (spotifyExplicit == candidateExplicit) {
+        raw += EXPLICIT_AGREE_BONUS
+        notes += "explicit-match"
+      } else {
+        raw -= EXPLICIT_DISAGREE_PENALTY
+        notes += "explicit-mismatch"
+      }
     }
     // Tiny prior on YouTube's own ranking, purely to break ties deterministically.
     raw += 0.02 * (1.0 - (candidate.position.coerceAtMost(20) / 20.0))
@@ -180,6 +224,7 @@ object MatchScorer {
       titleScore = titleScore,
       artistScore = artistScore,
       durationScore = durationScore,
+      albumScore = albumScore,
       vetoes = vetoes,
       notes = notes,
     )
