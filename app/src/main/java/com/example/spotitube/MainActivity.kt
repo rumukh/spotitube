@@ -231,8 +231,9 @@ private fun HomeScreen() {
         Text(
           "Long-press the link in your chat, choose Copy, then open Spotitube — the link appears " +
             "at the top, ready to play in one tap.\n\n" +
-            "Some apps, including Signal and Telegram, only offer Copy on a link. Where an app " +
-            "does offer Share, Share \u2192 Spotitube works too.",
+            "Sharing needs no setup either, where the sending app offers a share option. Some " +
+            "apps, including Signal and Telegram, only offer Copy on a link — that is the app's " +
+            "choice, not a fault in Spotitube, and the copy method above always gets you there.",
           style = MaterialTheme.typography.bodySmall,
         )
       }

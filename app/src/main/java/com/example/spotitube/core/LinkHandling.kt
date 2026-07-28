@@ -11,8 +11,12 @@ package com.example.spotitube.core
  * installed and holds the association, the user cannot simply switch Spotitube on. They have to
  * turn Spotify's "Open supported links" off first.
  *
- * Sharing to the app is unaffected by all of this: `ACTION_SEND` is not a web intent, so domain
- * verification cannot take it away from us and it needs no setup.
+ * Sharing to the app needs no setup, **where the sending app offers a share option**: `ACTION_SEND`
+ * is not a web intent, so domain verification cannot take it away from us. The distinction matters —
+ * the failure mode is reachability, not reliability. SEND handling is measured working on hardware,
+ * but Signal silently copies a link and Telegram offers only Open / Open In-App / Copy Link, so the
+ * user often has no way to reach it. Claiming sharing "always works" would be technically
+ * defensible and practically misleading.
  */
 enum class LinkHandling {
   /** Below API 31: the platform gives us no way to report the state honestly. */

@@ -248,7 +248,9 @@ Keep this honest; several claims here were overclaimed at some point and had to 
 | `spotify:{type}:{id}` routes correctly for all 6 forwarded types | **Measured**, screenshot-verified against real Spotify 9.1.68.1888. |
 | Spotify declares an https VIEW filter for `open.spotify.com` | **Measured** via `dumpsys package com.spotify.music`. |
 | Explicit `setPackage` + https bypasses domain-verification filtering | **Measured** on real vivo OriginOS hardware at API 36: with `pm get-app-links com.spotify.music` reporting *Verification link handling allowed: false*, an explicit `setPackage` + canonical HTTPS intent still reached Spotify. Previously AOSP-source-only; this was the last big unmeasured claim. |
-| Share-sheet path end-to-end, album bounce into the real Spotify app | **Not yet measured on device.** The emulator has no Spotify, so every emulator "bounce" landed in Chrome. |
+| Share-sheet path end-to-end, album bounce into the real Spotify app | **Measured** on hardware — external `ACTION_SEND` resolves and plays, confirmed twice via MediaSession, including with the link embedded in surrounding prose. Note the caveat above: this is reachability-limited, not reliability-limited. |
+| No user text, URL or query reaches logcat | **Measured** on hardware, not just source-reviewed: no `uri=` on `RESULT`, no `query=` on `SEARCH`, `INPUT … link=none (no Spotify link in 50 chars)`, and no message text anywhere in a demonstrably live logcat. Three-way correlation still works without `uri=` — the watch URL is reconstructed from the `videoId` and cross-checked against public oEmbed and MediaSession. |
+| `Http.resolveFinalUrl` throwing on redirect-budget exhaustion | **Unexercised, and expected to stay so** — not "untested so far". No live multi-hop chain exists to feed it: `spotify.link` is historical (see below) and canonical URLs do not redirect. The behaviour is accepted by inspection; do not open a task to test it. |
 | A **live `spotify.link` short code** expanding to canonical | **Never exercised, anywhere.** Every test uses an invented code, which only reaches Branch's unknown-code landing page. The user could not produce a short link at all — desktop Chrome and the mobile Spotify app both now yield canonical `open.spotify.com/track/…?si=…` — so the path looks largely historical and no real code was mintable to test with. The **degraded** path *is* runtime-verified: an unresolvable short link produced zero `market://` or `com.android.vending` references and landed in Spotify, so the Play Store trap is closed. |
 
 `connectedAndroidTest` is **parser / network / target-selection evidence only**. It proves the
@@ -570,6 +572,13 @@ actually message them in, the affordance barely exists. Real usage order is:
 Onboarding leads with link handling accordingly, and the `INPUT` log line carries
 `source=view|share|clipboard|manual` because `ACTION_SEND` alone cannot tell an external share from
 our own in-app buttons.
+
+> **The failure mode is reachability, not reliability.** SEND handling is measured working on
+> hardware, twice via MediaSession, including with the link embedded in surrounding prose. The user
+> simply often cannot *reach* it. So the user-facing wording is **"sharing needs no setup, where the
+> sending app offers a share option"** — never "sharing always works", which would be technically
+> defensible and practically misleading. Saying *where the sending app offers it* also tells the
+> user why the option is missing, instead of leaving them to conclude the app is broken.
 
 ### Gradle notes
 
