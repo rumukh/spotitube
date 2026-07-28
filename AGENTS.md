@@ -571,6 +571,33 @@ adb -s <serial> shell "dumpsys power | grep -E 'mWakefulness|screenState|mDreami
 Unlocking made the identical command work first time. A stale `updated` timestamp is the tell —
 compare it across two reads rather than trusting a single snapshot.
 
+### Never infer burst spacing from host-side command timing
+
+Testing anything time-sensitive — races, debounce, coalescing — by firing two `adb shell am start`s
+from separate `powershell` calls **does not produce the spacing you asked for**. Each call pays
+process start, adb transport and device-side `am` overhead. A requested 250 ms gap was measured at
+**~4 seconds** on the emulator: an order of magnitude out, in the direction that makes a race
+quietly untestable, because a 4-second gap lets the first request finish and the second one is
+then a legitimately separate action.
+
+Put both starts in a **single** `adb shell` invocation, and derive the actual delta from the
+**app's own log timestamps**, not from the host:
+
+```powershell
+adb -s <serial> shell "am start ... ; am start ..."
+adb -s <serial> logcat -d -s Spotitube:V | Select-String 'INPUT'   # read the real delta here
+```
+
+> **The general rule, which outlived the specific bug:** the host requests a spacing, the device
+> decides one. Anything asserted about concurrency must be measured on the device clock, or the
+> test is describing an interleaving it never produced. This cuts both ways — a race that
+> *reproduces* under inflated spacing is worse than it looks, and one that *fails to* reproduce
+> may simply never have been attempted.
+
+The Spotitube concurrency defect was found this way, and the zero-delay ruling rests on the
+device-clock trace (`INPUT` A 09.432, `INPUT` B 09.683, B result 10.466, stale A result 10.766 —
+B existed **1,083 ms** before A's side effect), not on any requested sleep.
+
 ### Build attribution: compare sources, not timestamps
 
 Checking an APK's build time against a commit's timestamp is the **wrong** test and will reject
