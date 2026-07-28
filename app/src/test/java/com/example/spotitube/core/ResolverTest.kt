@@ -1,0 +1,182 @@
+package com.example.spotitube.core
+
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class ResolverTest {
+
+  private class FakeSpotify(
+    private val pages: Map<String, String> = emptyMap(),
+    private val shortLinkTarget: String? = null,
+  ) : SpotifyMetadataSource {
+    var trackFetches = 0
+
+    override suspend fun expandShortLink(link: SpotifyLink): SpotifyLink? =
+      shortLinkTarget?.let { SpotifyLinkParser.parse(it) }
+
+    override suspend fun fetchTrack(link: SpotifyLink): SpotifyTrackMeta? {
+      trackFetches++
+      return pages[link.canonicalUrl]?.let { SpotifyMetaParser.parse(it) }
+    }
+  }
+
+  private class FakeYouTube(private val json: String? = null, private val boom: Boolean = false) : YouTubeMusicSearch {
+    var queries = mutableListOf<String>()
+
+    override suspend fun searchSongs(query: String): List<YouTubeSong> {
+      queries += query
+      if (boom) throw java.io.IOException("network down")
+      return InnerTubeParser.parseSongs(json)
+    }
+  }
+
+  private val rickUrl = "https://open.spotify.com/track/4PTG3Z6ehGkBFwjybzWkR8"
+
+  private fun rickSpotify() = FakeSpotify(mapOf(rickUrl to Fixtures.read(Fixtures.RICK_ASTLEY_HTML)))
+
+  private fun rickYouTube() = FakeYouTube(Fixtures.read(Fixtures.RICK_ASTLEY_SEARCH_JSON))
+
+  @Test
+  fun `track link resolves end to end to the right video`() = runTest {
+    val youTube = rickYouTube()
+    val outcome = SpotitubeResolver(rickSpotify(), youTube).resolve(rickUrl)
+    val play = outcome as ResolveOutcome.PlayOnYouTubeMusic
+    assertEquals("lYBUbBu4W08", play.videoId)
+    assertEquals("https://music.youtube.com/watch?v=lYBUbBu4W08", play.url)
+    assertEquals(listOf("Rick Astley Never Gonna Give You Up"), youTube.queries)
+    assertTrue(play.score >= MatchScorer.CONFIDENCE_THRESHOLD)
+  }
+
+  @Test
+  fun `track link buried in shared text still resolves`() = runTest {
+    val text = "yo check this \uD83C\uDFB5 $rickUrl?si=6f2a1c9d4b8e4f01 lol"
+    val outcome = SpotitubeResolver(rickSpotify(), rickYouTube()).resolve(text)
+    assertEquals("lYBUbBu4W08", (outcome as ResolveOutcome.PlayOnYouTubeMusic).videoId)
+  }
+
+  @Test
+  fun `spotify uri in shared text still resolves`() = runTest {
+    val outcome =
+      SpotitubeResolver(rickSpotify(), rickYouTube()).resolve("spotify:track:4PTG3Z6ehGkBFwjybzWkR8")
+    assertEquals("lYBUbBu4W08", (outcome as ResolveOutcome.PlayOnYouTubeMusic).videoId)
+  }
+
+  @Test
+  fun `non track entities bounce back to spotify without touching youtube`() = runTest {
+    val cases =
+      mapOf(
+        "https://open.spotify.com/album/6eUW0wxWtzkFdaEFsTJto6" to SpotifyEntityType.ALBUM,
+        "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M" to SpotifyEntityType.PLAYLIST,
+        "https://open.spotify.com/artist/0gxyHStUsqpMadRV0Di1Qt" to SpotifyEntityType.ARTIST,
+        "https://open.spotify.com/show/4rOoJ6Egrf8K2IrywzwOMk" to SpotifyEntityType.SHOW,
+        "https://open.spotify.com/episode/512ojhOuo1ktJprKbVcKyQ" to SpotifyEntityType.EPISODE,
+      )
+    for ((url, type) in cases) {
+      val spotify = FakeSpotify()
+      val youTube = FakeYouTube()
+      val outcome = SpotitubeResolver(spotify, youTube).resolve(url)
+      val bounce = outcome as? ResolveOutcome.BounceToSpotify ?: error("expected bounce for $url, got $outcome")
+      assertEquals(url, type, bounce.type)
+      assertEquals(url, url, bounce.url)
+      assertEquals("must not search YouTube for $url", emptyList<String>(), youTube.queries)
+      assertEquals("must not fetch metadata for $url", 0, spotify.trackFetches)
+    }
+  }
+
+  @Test
+  fun `locale prefixed album bounces to the canonical spotify url`() = runTest {
+    val outcome =
+      SpotitubeResolver(FakeSpotify(), FakeYouTube())
+        .resolve("https://open.spotify.com/intl-de/album/6eUW0wxWtzkFdaEFsTJto6?si=xyz")
+    val bounce = outcome as ResolveOutcome.BounceToSpotify
+    assertEquals("https://open.spotify.com/album/6eUW0wxWtzkFdaEFsTJto6", bounce.url)
+  }
+
+  @Test
+  fun `short link is expanded before deciding`() = runTest {
+    val spotify =
+      FakeSpotify(pages = mapOf(rickUrl to Fixtures.read(Fixtures.RICK_ASTLEY_HTML)), shortLinkTarget = rickUrl)
+    val outcome = SpotitubeResolver(spotify, rickYouTube()).resolve("https://spotify.link/aBcD1234efGh")
+    assertEquals("lYBUbBu4W08", (outcome as ResolveOutcome.PlayOnYouTubeMusic).videoId)
+  }
+
+  @Test
+  fun `short link that expands to an album bounces`() = runTest {
+    val album = "https://open.spotify.com/album/6eUW0wxWtzkFdaEFsTJto6"
+    val spotify = FakeSpotify(shortLinkTarget = album)
+    val youTube = FakeYouTube()
+    val outcome = SpotitubeResolver(spotify, youTube).resolve("https://spotify.app.link/aBcD1234efGh")
+    assertEquals(album, (outcome as ResolveOutcome.BounceToSpotify).url)
+    assertEquals(emptyList<String>(), youTube.queries)
+  }
+
+  @Test
+  fun `unresolvable short link falls back to spotify rather than guessing`() = runTest {
+    val short = "https://spotify.link/aBcD1234efGh"
+    val outcome = SpotitubeResolver(FakeSpotify(shortLinkTarget = null), FakeYouTube()).resolve(short)
+    val bounce = outcome as ResolveOutcome.BounceToSpotify
+    assertEquals(short, bounce.url)
+    assertEquals(SpotifyEntityType.SHORT_LINK, bounce.type)
+  }
+
+  @Test
+  fun `unreadable spotify page bounces instead of searching for nothing`() = runTest {
+    val youTube = FakeYouTube()
+    val outcome = SpotitubeResolver(FakeSpotify(), youTube).resolve(rickUrl)
+    assertEquals(rickUrl, (outcome as ResolveOutcome.BounceToSpotify).url)
+    assertEquals(emptyList<String>(), youTube.queries)
+  }
+
+  @Test
+  fun `no search results opens the youtube music search page`() = runTest {
+    val outcome = SpotitubeResolver(rickSpotify(), FakeYouTube(json = "{}")).resolve(rickUrl)
+    val search = outcome as ResolveOutcome.SearchOnYouTubeMusic
+    assertEquals("Rick Astley Never Gonna Give You Up", search.query)
+    assertEquals(
+      "https://music.youtube.com/search?q=Rick%20Astley%20Never%20Gonna%20Give%20You%20Up",
+      search.url,
+    )
+  }
+
+  @Test
+  fun `search failure degrades to the search page instead of crashing`() = runTest {
+    val outcome = SpotitubeResolver(rickSpotify(), FakeYouTube(boom = true)).resolve(rickUrl)
+    assertTrue(outcome is ResolveOutcome.SearchOnYouTubeMusic)
+  }
+
+  @Test
+  fun `only covers in the results means no auto play`() = runTest {
+    val covers =
+      listOf(
+        YouTubeSong("aaa", "Never Gonna Give You Up", listOf("Midnight Arena"), null, 263),
+        YouTubeSong("bbb", "Never Gonna Give You Up (Karaoke Version)", listOf("Urock Karaoke"), null, 214),
+      )
+    val youTube =
+      object : YouTubeMusicSearch {
+        override suspend fun searchSongs(query: String) = covers
+      }
+    val outcome = SpotitubeResolver(rickSpotify(), youTube).resolve(rickUrl)
+    val search = outcome as ResolveOutcome.SearchOnYouTubeMusic
+    assertTrue(search.reason, search.reason.contains("vetoed"))
+  }
+
+  @Test
+  fun `garbage input is unsupported`() = runTest {
+    val resolver = SpotitubeResolver(FakeSpotify(), FakeYouTube())
+    for (input in listOf(null, "", "just some words", "https://youtube.com/watch?v=abc")) {
+      assertTrue("$input", resolver.resolve(input) is ResolveOutcome.Unsupported)
+    }
+  }
+
+  @Test
+  fun `search urls percent encode spaces and specials`() {
+    assertEquals(
+      "https://music.youtube.com/search?q=Post%20Malone%2C%20Swae%20Lee%20Sunflower",
+      SpotitubeResolver.youTubeMusicSearchUrl("Post Malone, Swae Lee Sunflower"),
+    )
+    assertFalse(SpotitubeResolver.youTubeMusicSearchUrl("a b").contains(' '))
+  }
+}

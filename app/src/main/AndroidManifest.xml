@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!--
+      API 30+ hides other packages by default. Without these, resolveActivity()/getPackageInfo()
+      silently report "not installed" for YouTube Music and Spotify, and the browser fallback that
+      keeps us out of a redirect loop cannot see any browser at all.
+    -->
+    <queries>
+        <package android:name="com.google.android.apps.youtube.music" />
+        <package android:name="com.spotify.music" />
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="http" />
+        </intent>
+    </queries>
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:windowSoftInputMode="adjustResize"
+        android:theme="@style/Theme.Spotitube">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+          Transparent worker activity. noHistory + excludeFromRecents keep it out of Recents so the
+          user only ever sees a brief spinner between tapping the link and YouTube Music opening.
+
+          Launch mode is deliberately the default "standard": this is a one-shot handler, and with
+          singleTask a second link tap arriving while the first is still resolving is swallowed by
+          the existing task instead of being handled (observed on API 36).
+
+          Note autoVerify="false". We do not own spotify.com, so App Links verification could never
+          succeed; the domains stay user-selectable under "Open supported links", which is what the
+          button on the main screen sends the user to. The ACTION_SEND filter below always works.
+        -->
+        <activity
+            android:name=".LinkHandlerActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Spotitube.Overlay">
+
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:scheme="http" />
+                <data android:host="open.spotify.com" />
+                <data android:host="play.spotify.com" />
+                <data android:host="spotify.link" />
+                <data android:host="spotify.app.link" />
+            </intent-filter>
+
+            <!-- The reliable path on Android 12+: friend's message -> Share -> Spotitube. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>
