@@ -183,8 +183,13 @@ class ResolverTest {
       SpotitubeResolver(rickSpotify(), youTube).resolve(rickUrl) as ResolveOutcome.SearchOnYouTubeMusic
     val diagnostic = search.diagnostic ?: error("a losing candidate must be reported")
 
-    // Which candidate lost...
-    assertTrue(diagnostic, diagnostic.contains("best="))
+    // Which candidate lost — by ID, never by name. A losing candidate is by construction a close
+    // miss of the user's own query, so logging its title would leak what was shared under the guise
+    // of logging YouTube's data.
+    assertTrue(diagnostic, diagnostic.contains("bestVideoId="))
+    assertFalse("no candidate text may appear: $diagnostic", diagnostic.contains("Never Gonna"))
+    assertFalse("no candidate artist may appear: $diagnostic", diagnostic.contains("Midnight Arena"))
+    assertFalse("no candidate artist may appear: $diagnostic", diagnostic.contains("Urock"))
     // ...on which sub-score — the part that makes the line diagnostic rather than merely negative...
     for (subScore in listOf("t=", "a=", "al=")) {
       assertTrue("missing $subScore in: $diagnostic", diagnostic.contains(subScore))

@@ -186,10 +186,14 @@ class LinkHandlerActivity : ComponentActivity() {
   private fun act(outcome: ResolveOutcome) {
     when (outcome) {
       is ResolveOutcome.PlayOnYouTubeMusic -> {
+        // Identifiers and numbers only. `picked=` and `spotify=` used to carry the candidate's and
+        // the user's own track as TEXT — which contradicted the "no user text reaches logcat" claim
+        // outright, and had escaped the device audit because that checked `uri=`, `query=` and
+        // message bodies but never this line. The videoId still resolves to the same recording via
+        // public oEmbed, so correlation is unaffected; the on-screen status keeps the readable name.
         Log.i(
           TAG,
           "MATCH videoId=${outcome.videoId} score=${"%.3f".format(outcome.score)} " +
-            "picked=\"${outcome.description}\" spotify=\"${outcome.spotify.display}\" " +
             "spotifyDuration=${outcome.spotify.durationSeconds} " +
             "explicit=${outcome.spotify.isExplicit} playable=${outcome.spotify.isPlayable}" +
             (outcome.spotify.playabilityReason?.let { " playabilityReason=$it" } ?: "") +

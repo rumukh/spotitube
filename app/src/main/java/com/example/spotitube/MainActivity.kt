@@ -53,6 +53,7 @@ import com.example.spotitube.core.LinkHandling
 import com.example.spotitube.core.ResolveOutcome
 import com.example.spotitube.core.SpotifyLinkParser
 import com.example.spotitube.theme.SpotitubeTheme
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /** Explains the app, exposes the one-tap link-handling setting, and can self-test over real network. */
@@ -342,9 +343,17 @@ private fun spotifyLinkInClipboard(context: Context): String? {
 /** Executes the full resolve pipeline and renders it as text. Never launches an app. */
 private suspend fun runSelfTest(): String {
   val started = System.currentTimeMillis()
+  // `runCatching` would swallow CancellationException and render it as "FAILED: ...", telling the
+  // user the network is broken when in fact they simply left the screen. Cancellation is rethrown
+  // so it propagates; only a genuine failure becomes a message.
   val outcome =
-    runCatching { LinkHandlerActivity.resolver.resolve(SELF_TEST_TRACK) }
-      .getOrElse { return "FAILED: ${it.javaClass.simpleName}: ${it.message}" }
+    try {
+      LinkHandlerActivity.resolver.resolve(SELF_TEST_TRACK)
+    } catch (cancellation: CancellationException) {
+      throw cancellation
+    } catch (error: Throwable) {
+      return "FAILED: ${error.javaClass.simpleName}: ${error.message}"
+    }
   val elapsed = System.currentTimeMillis() - started
   return when (outcome) {
     is ResolveOutcome.PlayOnYouTubeMusic ->

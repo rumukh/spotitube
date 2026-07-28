@@ -135,13 +135,20 @@ class SpotitubeResolver(
     fun youTubeMusicSearchUrl(query: String): String = YouTubeMusic.searchUrl(query)
 
     /**
-     * Why the best candidate lost, in one line: the candidate, the sub-scores, the threshold it had
-     * to clear, and any veto. `t`/`a`/`al` are what make this diagnostic rather than merely
-     * negative — a bare `best 0.55` cannot distinguish "we found the wrong song" from "we found the
-     * right song and YouTube named the album differently", and those need opposite fixes.
+     * Why the best candidate lost: **identifiers and numbers only, never text.**
+     *
+     * `t`/`a`/`al` are what make this diagnostic rather than merely negative — a bare `best 0.55`
+     * cannot distinguish "we found the wrong song" from "we found the right song and YouTube named
+     * the album differently", and those need opposite fixes.
+     *
+     * The candidate's title and artist are deliberately **not** here. They would be a near-copy of
+     * the user's own query on this path, since a losing candidate is by construction a close miss —
+     * so logging them would leak what was shared under the guise of logging YouTube's data. The
+     * `videoId` is sufficient for correlation and resolves to the same row via public oEmbed.
+     * Veto and note names are fixed category strings, not user content.
      */
     internal fun diagnose(best: ScoredMatch): String =
-      "best=\"${best.song.artistLine} — ${best.song.title}\" ${best.explain()} " +
+      "bestVideoId=${best.song.videoId.ifBlank { "none" }} ${best.explain()} " +
         "threshold=%.2f".format(MatchScorer.CONFIDENCE_THRESHOLD) +
         (if (best.notes.isNotEmpty()) " notes=${best.notes.joinToString(",")}" else "")
   }
