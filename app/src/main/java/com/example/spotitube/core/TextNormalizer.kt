@@ -76,6 +76,66 @@ object TextNormalizer {
   private val FEATURE = Regex("""[\(\[]\s*(feat|ft|featuring|with)[\.\s][^\)\]]*[\)\]]""", RegexOption.IGNORE_CASE)
   private val FEATURE_SUFFIX = Regex("""\s[-–—]\s*(feat|ft|featuring)[\.\s].*$""", RegexOption.IGNORE_CASE)
 
+  /** ` - `, ` – `, ` — ` used as a title/suffix separator. */
+  private val DASH_SEPARATOR = Regex("""\s[-–—]\s""")
+
+  /**
+   * Strips YouTube Music's romanisation suffix: `夜の踊り子 - Yoru No Odoriko` → `夜の踊り子`.
+   *
+   * YouTube Music appends a Latin transliteration to non-Latin titles; Spotify does not. Left in
+   * place this is not cosmetic — a CJK title contains no spaces, so it canonicalises to a **single
+   * token**, and the appended romanisation collapses token-set recall to `1/n`. Measured: the
+   * correct recording of 夜の踊り子, by the right artist at exactly the right duration, scored a
+   * title similarity of 0.40 and fell under the confidence threshold. Whether a track played came
+   * down to how many words its romanisation happened to add.
+   *
+   * Deliberately narrow. It fires only when the head contains a non-Latin letter and the tail is
+   * purely Latin, so Latin-script titles — `Sunflower - Spider-Man: Into the Spider-Verse` — are
+   * untouched and cannot regress. It also cannot manufacture a false match between two *different*
+   * non-Latin songs: stripping leaves the CJK head, which is the discriminating part, so
+   * `新宝島 - Shin Takara Jima` still shares nothing with `夜の踊り子`.
+   *
+   * Variant vetoes are unaffected: [MatchScorer.variantMarkers] reads [normalize] on the raw title,
+   * not [canonical], so a stripped `… (agraph Remix) - … (agraph Remix)` is still rejected.
+   */
+  fun stripRomanisation(raw: String): String {
+    val match = DASH_SEPARATOR.findAll(raw).lastOrNull() ?: return raw
+    val head = raw.substring(0, match.range.first).trim()
+    val tail = raw.substring(match.range.last + 1).trim()
+    if (head.isEmpty() || tail.isEmpty()) return raw
+
+    val headIsNonLatin = codePoints(head).any { Character.isLetter(it) && !isLatinScript(it) }
+    if (!headIsNonLatin) return raw
+
+    // The tail must be a transliteration: Latin letters only, and at least one of them. Requiring a
+    // letter stops a bare numeric or symbolic suffix being mistaken for a romanisation.
+    var sawLatinLetter = false
+    for (cp in codePoints(tail)) {
+      if (!Character.isLetter(cp)) continue
+      if (!isLatinScript(cp)) return raw
+      sawLatinLetter = true
+    }
+    return if (sawLatinLetter) head else raw
+  }
+
+  private fun codePoints(text: String): Sequence<Int> = sequence {
+    var i = 0
+    while (i < text.length) {
+      val cp = text.codePointAt(i)
+      yield(cp)
+      i += Character.charCount(cp)
+    }
+  }
+
+  /** COMMON/INHERITED cover shared punctuation and marks, which say nothing about script. */
+  private fun isLatinScript(codePoint: Int): Boolean =
+    when (Character.UnicodeScript.of(codePoint)) {
+      Character.UnicodeScript.LATIN,
+      Character.UnicodeScript.COMMON,
+      Character.UnicodeScript.INHERITED -> true
+      else -> false
+    }
+
   /** `(2022 Remaster)`, `- Remastered 2011`, `[2009 Digital Remaster]`, ... */
   private val YEARED_REMASTER =
     Regex("""[\(\[]?\s*(19|20)\d{2}\s*(digital\s+)?remaster(ed)?\s*[\)\]]?""", RegexOption.IGNORE_CASE)
@@ -88,7 +148,8 @@ object TextNormalizer {
    * that suffix *is* the title.
    */
   fun stripNoise(raw: String): String {
-    var s = raw
+    // First: YouTube Music's romanisation suffix, so everything below operates on the real title.
+    var s = stripRomanisation(raw)
     s = FEATURE.replace(s, " ")
     s = FEATURE_SUFFIX.replace(s, " ")
     s = YEARED_REMASTER.replace(s, " ")

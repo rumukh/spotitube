@@ -33,6 +33,23 @@ object Fixtures {
 
   const val SUNFLOWER_SEARCH_JSON = "innertube_sunflower.json"
 
+  /** `open.spotify.com/embed/track/6qB3lZIfnDC8TE2245NDtO` — 夜の踊り子, sakanaction, 302920 ms. */
+  const val YORU_NO_ODORIKO_EMBED = "spotify_embed_yoru_no_odoriko.html"
+
+  /** `2jdbZGFp8KVTuk0YxDNL4l` — 高嶺の花子さん, back number, 294813 ms. */
+  const val TAKANE_EMBED = "spotify_embed_takane_no_hanakosan.html"
+
+  /** `35MeePbBnryubkVG0v8GbI` — ブルーアンバー, back number, 207845 ms. */
+  const val BLUE_AMBER_EMBED = "spotify_embed_blue_amber.html"
+
+  /** `5BC6kr6etk2Y9J62AyI4i3` — 青と夏, Mrs. GREEN APPLE, 270026 ms. */
+  const val AO_TO_NATSU_EMBED = "spotify_embed_ao_to_natsu.html"
+
+  const val YORU_NO_ODORIKO_SEARCH = "innertube_yoru_no_odoriko.json"
+  const val TAKANE_SEARCH = "innertube_takane_no_hanakosan.json"
+  const val BLUE_AMBER_SEARCH = "innertube_blue_amber.json"
+  const val AO_TO_NATSU_SEARCH = "innertube_ao_to_natsu.json"
+
   /** A search whose rows carry `MUSIC_EXPLICIT_BADGE`. */
   const val EXPLICIT_SEARCH_JSON = "innertube_explicit.json"
 }
