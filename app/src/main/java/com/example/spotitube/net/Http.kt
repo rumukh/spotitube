@@ -97,9 +97,9 @@ internal object Http {
       try {
         URI(currentUrl).resolve(location.trim())
       } catch (e: IllegalArgumentException) {
-        throw IOException("Unparsable redirect target '${location.take(120)}': ${e.message}")
+        throw IOException("Unparsable redirect target (${e.javaClass.simpleName})")
       } catch (e: URISyntaxException) {
-        throw IOException("Unparsable redirect target '${location.take(120)}': ${e.message}")
+        throw IOException("Unparsable redirect target (${e.javaClass.simpleName})")
       }
 
     val scheme = next.scheme?.lowercase()
@@ -147,13 +147,13 @@ internal object Http {
         connection.disconnect()
       }
     }
-    throw IOException("Too many redirects for $url (last status $lastCode)")
+    throw IOException("Too many redirects (last status $lastCode)")
   }
 
   /** A redirect off the allow-list is a hard failure, never something we quietly follow. */
   private fun checkHost(url: String, allow: HostAllowList?): String {
     if (allow == null) return url
-    val host = URL(url).host ?: throw IOException("No host in $url")
+    val host = URL(url).host ?: throw IOException("No host in redirect target")
     if (!allow.allows(host)) throw IOException("Refusing to follow $host (allowed: $allow)")
     return url
   }

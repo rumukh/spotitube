@@ -294,12 +294,16 @@ Every run ends with one structured line, e.g.
 
 ```
 RESULT outcome=PLAY started=true target=com.google.android.apps.youtube.music
-       via=preferred-app uri=https://music.youtube.com/watch?v=lYBUbBu4W08
-       videoId=lYBUbBu4W08 score=1.070
+       via=preferred-app videoId=lYBUbBu4W08 score=1.060
 ```
 
+No URI is logged: these lines land in logcat on the owner's own phone, and the URI is what
+they are listening to. `videoId` plus `outcome` is enough to diagnose a mis-resolution.
+`started` means the system accepted the intent — not that anything rendered or played.
+
 `outcome` is `PLAY` | `SEARCH` | `BOUNCE` | `LOOPGUARD` | `UNSUPPORTED`; `via` is
-`preferred-app` | `browser-fallback` | `chooser-excluding-self` | `no-handler`.
+`preferred-app` | `scheme-fallback` | `browser-fallback` | `chooser-excluding-self` |
+`no-handler`.
 
 The share path is the one that is unaffected by Android 12+ link verification, because
 `ACTION_SEND` is not a web intent and no other app can claim it away from us. (The code path

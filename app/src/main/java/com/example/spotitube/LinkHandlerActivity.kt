@@ -121,7 +121,9 @@ class LinkHandlerActivity : ComponentActivity() {
         val outcome =
           runCatching { resolver.resolve(input) }
             .getOrElse { error ->
-              Log.w(TAG, "Resolve failed", error)
+              // Log the class only. Throwable messages from the HTTP layer can embed the URL, and
+              // passing the Throwable itself would print message and stack into logcat.
+              Log.w(TAG, "Resolve failed (${error.javaClass.simpleName})")
               ResolveOutcome.Unsupported(error.message ?: error.javaClass.simpleName)
             }
         if (generation != currentGeneration) return@launch

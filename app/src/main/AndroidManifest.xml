@@ -50,7 +50,8 @@
 
           Note autoVerify="false". We do not own spotify.com, so App Links verification could never
           succeed; the domains stay user-selectable under "Open supported links", which is what the
-          button on the main screen sends the user to. The ACTION_SEND filter below always works.
+          button on the main screen sends the user to. The ACTION_SEND filter below is unaffected
+        by domain verification: it is not a web intent, so no other app can claim it away.
         -->
         <activity
             android:name=".LinkHandlerActivity"
