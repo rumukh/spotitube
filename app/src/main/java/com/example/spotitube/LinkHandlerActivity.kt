@@ -21,16 +21,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.lifecycleScope
-import com.example.spotitube.core.ResolveOutcome
 import com.example.spotitube.core.LoopGuard
+import com.example.spotitube.core.RequestArbiter
+import com.example.spotitube.core.ResolveOutcome
 import com.example.spotitube.core.SpotifyEntityType
 import com.example.spotitube.core.SpotifyLinkParser
 import com.example.spotitube.core.SpotitubeResolver
 import com.example.spotitube.net.HttpSpotifyMetadataSource
 import com.example.spotitube.net.InnerTubeMusicSearch
 import com.example.spotitube.theme.SpotitubeTheme
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 
 /**
  * The activity that actually does the work.
@@ -46,12 +48,6 @@ import kotlinx.coroutines.launch
 class LinkHandlerActivity : ComponentActivity() {
 
   private var status by mutableStateOf("Looking up the track…")
-
-  /** In-flight resolve, cancelled when a newer intent arrives. */
-  private var resolveJob: kotlinx.coroutines.Job? = null
-
-  /** Incremented per intent; only the newest generation may act or finish. */
-  private var currentGeneration = 0
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -98,13 +94,6 @@ class LinkHandlerActivity : ComponentActivity() {
       }
 
   private fun handle(input: String?) {
-    // Claim a generation and cancel any in-flight resolve BEFORE anything else, including the loop
-    // guard. Otherwise a third identical intent that trips the guard would launch a browser while
-    // the previous resolve was still completing, and both could act.
-    resolveJob?.cancel()
-    resolveJob = null
-    val generation = ++currentGeneration
-
     // Never log the raw input. On a SEND this is the friend's entire message, which can contain
     // anything they wrote around the link, and logcat is readable by adb on the user's own phone.
     // The parsed link is enough to debug with: it is the part we actually act on.
@@ -123,31 +112,40 @@ class LinkHandlerActivity : ComponentActivity() {
     // were a URL. There is also nothing to loop on without a link: we only ever launch parsed ones.
     val guardKey = parsed?.canonicalUrl
     if (guardKey != null && loopGuard.recordAndCheck(guardKey, System.currentTimeMillis())) {
-      if (generation != currentGeneration) return
       val report = LaunchIntents.open(this, guardKey, preferredPackage = null)
       Log.w(TAG, "RESULT outcome=LOOPGUARD $report")
       finish()
       return
     }
 
-    // A second link can arrive via onNewIntent while the first is still resolving. The generation
-    // was claimed at the top of handle(), so only the newest request can act or finish: otherwise
-    // whichever resolve returned first would launch its result and finish() the activity, either
-    // dropping the newer intent or launching two apps back to back.
-    resolveJob =
-      lifecycleScope.launch {
-        val outcome =
-          runCatching { resolver.resolve(input) }
-            .getOrElse { error ->
-              // Log the class only. Throwable messages from the HTTP layer can embed the URL, and
-              // passing the Throwable itself would print message and stack into logcat.
-              Log.w(TAG, "Resolve failed (${error.javaClass.simpleName})")
-              ResolveOutcome.Unsupported(error.message ?: error.javaClass.simpleName)
-            }
-        if (generation != currentGeneration) return@launch
+    // Arbitration is PROCESS-scoped, not per-instance. Two different link URIs create two
+    // independent activity instances under `standard` launch mode, so instance fields could never
+    // arbitrate between them — measured on device, both launched and the older link won 3/3.
+    //
+    // The work also runs in an application-scoped coroutine rather than lifecycleScope: the
+    // superseded activity calls finish(), and a newer request tied to a lifecycle would be killed
+    // by the *previous* activity's scope cancellation.
+    arbiter.submit(
+      resolve = { resolver.resolve(input) },
+      onResult = { outcome ->
         act(outcome)
         finish()
-      }
+      },
+      onSuperseded = {
+        // A newer link is already being handled. Exit silently: no launch, no search, no toast,
+        // and nothing logged as a failure. This is not a RESULT line, so it can never be mistaken
+        // for an outcome.
+        Log.i(TAG, "SUPERSEDED link=${parsed?.canonicalUrl ?: "none"}")
+        finish()
+      },
+      onFailure = { error ->
+        // Log the class only. Throwable messages from the HTTP layer can embed the URL, and
+        // passing the Throwable itself would print message and stack into logcat.
+        Log.w(TAG, "Resolve failed (${error.javaClass.simpleName})")
+        act(ResolveOutcome.Unsupported(error.javaClass.simpleName))
+        finish()
+      },
+    )
   }
 
   private fun act(outcome: ResolveOutcome) {
@@ -258,6 +256,18 @@ class LinkHandlerActivity : ComponentActivity() {
 
     /** Shared across instances: the launch mode is `standard`, so every intent builds a new one. */
     private val loopGuard = LoopGuard()
+
+    /**
+     * Process-scoped, and application-scoped rather than lifecycle-scoped.
+     *
+     * Both properties are load-bearing. Per-instance state cannot arbitrate between two activity
+     * instances, and a lifecycle-scoped job for the newest request would be killed when the
+     * superseded activity finishes.
+     */
+    private val arbiter =
+      RequestArbiter<ResolveOutcome>(
+        CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+      )
 
     /** Kept in one place so the UI and tests describe entity types identically. */
     fun describe(type: SpotifyEntityType): String =

@@ -506,15 +506,19 @@ Genuinely worth removing, by contrast: `e.message` from `ActivityNotFoundExcepti
 `SecurityException`, because the message embeds the entire `Intent` **including the data URI** — a
 full-URL leak from inside a failure path, where nobody thinks to look.
 
-### vivo OriginOS silently throttles app logcat
+### vivo OriginOS intermittently throttles app logcat
 
-Mid-session on the vivo X300 Pro the app simply **stopped being able to write to logcat**. Share
-tests produced no output at all and looked completely dead; they had in fact been working the whole
-time. OriginOS applies its own log throttling with no warning.
+Mid-session on the vivo X300 Pro the app **stopped being able to write to logcat**. Share tests
+produced no output at all and looked completely dead; they had in fact been working the whole time.
+
+**It is intermittent, not permanent** — logging came back later in the same session, and the privacy
+verification was completed against a demonstrably live logcat. So do not conclude the device has
+stopped logging for good, and do not conclude a feature is broken.
 
 > On this device, **absence of logcat output is not evidence of failure.** Confirm against
 > `dumpsys media_session` or what is actually on screen before concluding anything is broken.
-> MediaSession is the authoritative signal; logcat is a convenience that this OEM can withdraw.
+> MediaSession is the authoritative signal; logcat is a convenience this OEM can withdraw and
+> restore without warning.
 
 ### A sleeping phone manufactures a convincing false failure
 
