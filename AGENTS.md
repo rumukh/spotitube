@@ -249,6 +249,7 @@ Keep this honest; several claims here were overclaimed at some point and had to 
 | Spotify declares an https VIEW filter for `open.spotify.com` | **Measured** via `dumpsys package com.spotify.music`. |
 | Explicit `setPackage` + https bypasses domain-verification filtering | **Measured** on real vivo OriginOS hardware at API 36: with `pm get-app-links com.spotify.music` reporting *Verification link handling allowed: false*, an explicit `setPackage` + canonical HTTPS intent still reached Spotify. Previously AOSP-source-only; this was the last big unmeasured claim. |
 | Share-sheet path end-to-end, album bounce into the real Spotify app | **Not yet measured on device.** The emulator has no Spotify, so every emulator "bounce" landed in Chrome. |
+| A **live `spotify.link` short code** expanding to canonical | **Never exercised, anywhere.** Every test uses an invented code, which only reaches Branch's unknown-code landing page. The user could not produce a short link at all — desktop Chrome and the mobile Spotify app both now yield canonical `open.spotify.com/track/…?si=…` — so the path looks largely historical and no real code was mintable to test with. The **degraded** path *is* runtime-verified: an unresolvable short link produced zero `market://` or `com.android.vending` references and landed in Spotify, so the Play Store trap is closed. |
 
 `connectedAndroidTest` is **parser / network / target-selection evidence only**. It proves the
 intent was constructed, never that anything played. Do not cite it for playback.
@@ -475,6 +476,11 @@ non-browser UA (`Spotitube/1.0 (+Android)`).
 > **Do not test this with an invented code.** An invalid code returns Branch's unknown-code landing
 > page — `200`, no redirect — which looks exactly like "this UA doesn't work" and will lead you to
 > false conclusions in both directions. A real code has to be minted from Spotify's share sheet.
+>
+> **And you probably cannot mint one.** As of 2026-07-28 neither desktop Chrome nor the mobile
+> Spotify app would produce a `spotify.link` URL — both now share canonical
+> `open.spotify.com/track/…?si=…`. Treat this whole path as historical: keep the handling, do not
+> spend time hunting for a code to test it with.
 
 That `S.browser_fallback_url` matters for the failure path: if expansion fails and you hand the
 original Branch link to a browser while Spotify is **not** installed, the user lands on the Play
@@ -509,6 +515,40 @@ time. OriginOS applies its own log throttling with no warning.
 > On this device, **absence of logcat output is not evidence of failure.** Confirm against
 > `dumpsys media_session` or what is actually on screen before concluding anything is broken.
 > MediaSession is the authoritative signal; logcat is a convenience that this OEM can withdraw.
+
+### A sleeping phone manufactures a convincing false failure
+
+With the screen off and locked, our handler activity still runs and still logs — but the downstream
+launch is silently blocked, **and** `dumpsys media_session` keeps serving a **stale** entry whose
+`updated` timestamp never moves. The result reads exactly like a launch regression in the new build:
+the handler ran, nothing played, and the media session "shows" the previous track.
+
+Before concluding any device test failed:
+
+```powershell
+adb -s <serial> shell "dumpsys power | grep -E 'mWakefulness|screenState|mDreamingLockscreen'"
+```
+
+Unlocking made the identical command work first time. A stale `updated` timestamp is the tell —
+compare it across two reads rather than trusting a single snapshot.
+
+### Build attribution: compare sources, not timestamps
+
+Checking an APK's build time against a commit's timestamp is the **wrong** test and will reject
+perfectly valid artifacts — a rebuild with no source change is still the same code, and a commit
+made after a build does not invalidate it.
+
+The correct question is whether anything under `app/src` actually changed between the two:
+
+```powershell
+git --no-pager diff --name-only <commit> -- app/src
+```
+
+Empty output means the APK matches that commit regardless of clock order.
+
+> **Three ways this device fakes a failure**, all hit in one evening: vivo's silent logcat
+> suppression, a sleeping screen with a stale MediaSession, and timestamp-based build attribution.
+> None of them look like the environment; all of them look like your code.
 
 ### Signal and Telegram do not offer Share on a link
 
