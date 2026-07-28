@@ -227,6 +227,36 @@ Google Maven, Maven Central, and services.gradle.org are all reachable from this
 - Clean up scratch projects under `$env:TEMP` when done; keep `~\.gradle` (warm cache).
 - Prefer `adb ... emu kill` over `Stop-Process` for the emulator.
 
+### Who owns what (settled 2026-07-28, so it stops being re-litigated)
+
+Three sessions share this one working tree. Cross-session messages have proved unreliable —
+one session reported never receiving a list, and another re-raised the same three resolved
+questions five times — so durable answers belong **here**, not in chat.
+
+| Area | Owner |
+| --- | --- |
+| App icon, `.github/workflows/`, `.gitignore`, the GitHub remote | coordinator |
+| `app/src/**` Kotlin and tests | implementation session |
+| The physical phone (under a consent protocol) | device session |
+
+Settled decisions, each verifiable rather than taken on trust:
+
+* **`0fc5b1d` mixes the CJK fix with the coordinator's icon and CI work.** The message
+  describes only the former. It stays that way: it is pushed, and force-pushing a public
+  repo costs more than a misleading message. Verify with `git log --oneline`.
+* **The icon lint regression is fixed** in `fa8af4f` — `IconLauncherShape` ×10 and
+  `IconDuplicates` ×5 are gone, total lint back to the baseline 12. Verify by running
+  `:app:lintDebug`, and hash `mipmap-xxhdpi/ic_launcher.png` against `ic_launcher_round.png`
+  — they are distinct, and the round one is genuinely round.
+* **There is no fourth session.** Unexplained rebuilds and icon edits were the coordinator
+  working in the same tree.
+
+### `git commit --only`, always
+
+The index is shared state in one working tree. A concurrent `git add` between your `git add`
+and your `git commit` means your commit takes their files too — this happened twice, in both
+directions. Explicit staging does **not** protect you; `git commit --only <paths>` does.
+
 ---
 
 ## 7. Spotitube — what this app is and how to run it
