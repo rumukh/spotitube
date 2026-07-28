@@ -40,11 +40,15 @@ class LinkTicket<T> internal constructor(
  * so this has to be process-scoped: per-instance state cannot see across instances, and measured on
  * device both launched, with the *older* link winning 3 of 3 at ~800 ms spacing.
  *
- * **The settle window** handles what arbitration provably cannot. Latest-wins can only suppress an
- * older request once a newer one *exists* — if the old resolve finishes and launches at 700 ms and
- * the next tap lands at 800 ms, no token can undo a launch that already happened. Only refusing to
- * act until things have been quiet for a moment can. This is why [settleWindowMillis] exists rather
- * than acting the instant a resolve returns.
+ * **The settle window** is a mechanism kept for one hypothetical arbitration cannot cover: an old
+ * resolve finishing and launching at 700 ms with the next tap landing at 800 ms, where no token can
+ * undo a launch that already happened. **Its default is zero, because that case has never been
+ * observed.** Every measured failure — 250 ms, 500 ms and 800 ms spacings alike — had the newer
+ * request submitted while the older was still resolving, which is precisely what arbitration fixes.
+ * The device trace is unambiguous: `INPUT` A 09.432, `INPUT` B 09.683, B result 10.466, stale A
+ * result 10.766 — B existed **1,083 ms** before A's side effect. A non-zero default would tax the
+ * overwhelmingly common single-tap path to prevent a failure no measurement has produced, so
+ * [settleWindowMillis] stays injectable and tested, and stays off.
  *
  * The resolve job deliberately runs in [scope] and is **not** a child of any Activity: the older
  * instance calls `finish()`, and a lifecycle-tied job for the *newest* request would be killed by
@@ -84,13 +88,18 @@ class LatestLinkCoordinator<T>(
       scope.launch {
         try {
           val value =
-            coroutineScope {
-              // The quiet window runs CONCURRENTLY with the resolve, so it costs nothing whenever
-              // resolving already takes longer than the window — which is the measured norm.
-              val settle = launch { delay(settleWindowMillis) }
-              val resolved = resolve(input)
-              settle.join()
-              resolved
+            if (settleWindowMillis <= 0L) {
+              // The default. No dispatch, no join, nothing on the common path.
+              resolve(input)
+            } else {
+              coroutineScope {
+                // Runs CONCURRENTLY with the resolve, so it costs nothing whenever resolving
+                // already takes longer than the window — which is the measured norm.
+                val settle = launch { delay(settleWindowMillis) }
+                val resolved = resolve(input)
+                settle.join()
+                resolved
+              }
             }
           synchronized(lock) { if (newestGeneration == generation) pending = null }
           completion.complete(LinkRequestOutcome.Resolved(value))
@@ -106,6 +115,10 @@ class LatestLinkCoordinator<T>(
       }
 
     synchronized(lock) { if (newestGeneration == generation) inFlight = job }
+    // Drop the finished job rather than letting the process-scoped singleton pin the last Job and
+    // its whole callback graph until the next submission. Identity-checked so a later submission's
+    // job is never cleared by an earlier one completing.
+    job.invokeOnCompletion { synchronized(lock) { if (inFlight === job) inFlight = null } }
     return LinkTicket(generation, completion)
   }
 
@@ -141,22 +154,28 @@ class LatestLinkCoordinator<T>(
     /**
      * How long the app waits for things to go quiet before acting on a resolved link.
      *
-     * **500 ms**, chosen from the device measurements rather than picked:
+     * **Zero.** Not "no window was considered" — a window was built, measured against the device
+     * evidence, and switched off because the evidence does not support paying for it:
      *
-     * * It covers the whole 250–500 ms band in which two taps both launched.
-     * * It runs concurrently with the resolve, so it costs `max(0, 500 ms − resolveTime)`, not
-     *   500 ms. Measured resolve on the test phone is ~1.0 s, so on that device it is **free**.
-     * * A 1,000 ms window was considered and rejected: on a warm connection returning in 400–600 ms
-     *   it would add up to 600 ms of dead time to the overwhelmingly common **single-tap** path, to
-     *   prevent a brief flicker in a burst that requires two *different* links tapped inside a
-     *   second. Taxing the common path to tidy the rare one is the wrong trade.
+     * * Every observed failure (250 ms, 500 ms and 800 ms spacings) had the newer request submitted
+     *   **while the older was still resolving**. Process-scoped latest-wins arbitration fixes all of
+     *   them with no added latency. Measured resolve is ~0.8–1.3 s, far wider than any tap gap a
+     *   human produces.
+     * * The case a window would fix — an older resolve completing and launching *before* the next
+     *   tap exists — has **never been observed**. Once A has completed and switched apps, B is
+     *   reasonably a separate action anyway.
+     * * A non-zero default therefore taxes the overwhelmingly common single-tap path to prevent a
+     *   failure no measurement has produced.
      *
-     * Note what this does and does not fix. The window is what suppresses the 250–500 ms
-     * "both launch" case. The ~800 ms case is fixed by arbitration alone — the newer request simply
-     * resolves second and wins — so lengthening the window buys nothing there.
+     * The parameter stays injectable and a test still proves a synthetic non-zero value coalesces a
+     * future-arrival request, so the mechanism is exercised and re-enabling it is a one-line change
+     * if evidence ever appears. Until then the resolve path skips it entirely — no dispatch, no join.
      *
-     * Deliberately a named, injectable constant: changing it is a one-line change, not a rework.
+     * **Do not raise this without a device trace showing a second launch that arbitration missed.**
+     * The concurrency tests must pass because resolvers are held *overlapping*, never because a
+     * timer masked the race; if a window is what makes them green, the arbitration is broken and the
+     * window is hiding it.
      */
-    const val DEFAULT_SETTLE_WINDOW_MILLIS = 500L
+    const val DEFAULT_SETTLE_WINDOW_MILLIS = 0L
   }
 }

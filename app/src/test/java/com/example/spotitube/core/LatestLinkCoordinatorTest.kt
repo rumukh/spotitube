@@ -38,7 +38,10 @@ class LatestLinkCoordinatorTest {
     var waiter: Job? = null
   }
 
-  private class Harness(val scope: TestScope, settleWindowMillis: Long = 500L) {
+  private class Harness(
+    val scope: TestScope,
+    settleWindowMillis: Long = LatestLinkCoordinator.DEFAULT_SETTLE_WINDOW_MILLIS,
+  ) {
     val gates = mutableMapOf<String, CompletableDeferred<String>>()
     val launches = mutableListOf<String>()
     val failureLogs = mutableListOf<String>()
@@ -83,16 +86,26 @@ class LatestLinkCoordinatorTest {
   // --- 1. A then B at several spacings ----------------------------------------------------------
 
   @Test
-  fun `inside the settle window B wins with exactly one launch`() {
-    for (gap in listOf(0L, 100L, 250L, 400L)) {
+  fun `overlapping taps yield one launch at every measured spacing, with no settle window`() {
+    // THE DEVICE CASE, and the reason the settle window defaults to zero.
+    //
+    // Every measured failure had B submitted while A was STILL RESOLVING: device trace INPUT A
+    // 09.432, INPUT B 09.683, B result 10.466, stale A result 10.766 — B existed 1,083 ms before
+    // A's side effect. So A's gate is deliberately left OPEN across the gap here, and only opened
+    // after B is submitted. Nothing but arbitration can be producing the result: with a zero
+    // window there is no timer to mask anything.
+    //
+    // 800 ms is included precisely because the old 500 ms window could not cover it. It passes.
+    for (gap in listOf(0L, 100L, 250L, 400L, 500L, 800L)) {
       runTest {
         val h = Harness(TestScope(testScheduler))
         val a = h.submit("A")
-        // A resolves quickly — the hardware case where the older link launched first.
-        h.resolveNow("A")
+        // A is in flight and stays in flight — resolution is NOT completed here.
         testScheduler.advanceTimeBy(gap)
 
         val b = h.submit("B")
+        // Now let the older one come back. It must not act, at any spacing.
+        h.resolveNow("A")
         h.resolveNow("B")
         testScheduler.advanceUntilIdle()
 
@@ -105,33 +118,60 @@ class LatestLinkCoordinatorTest {
   }
 
   @Test
-  fun `beyond the settle window both act, and the newer one is last`() = runTest {
-    // Documents the limit of the current window rather than hiding it. At 800ms A has already
-    // resolved, waited out its window and launched before B exists — and nothing can undo a launch
-    // that already happened. The user sees a brief flicker and lands on B, which is the correct
-    // song; this is a cosmetic cost, not the wrong-song defect.
-    //
-    // Raising DEFAULT_SETTLE_WINDOW_MILLIS above the spacing would collapse this to a single
-    // launch, at the price of adding dead time to every single tap on a fast connection. That is
-    // the trade the constant documents.
-    val h = Harness(TestScope(testScheduler), settleWindowMillis = 500L)
+  fun `the older resolver returning FIRST still cannot act`() {
+    // The ordering that lost on hardware: A overlaps B, but A's network call comes back first.
+    // Arbitration must be by submission generation, never by completion order.
+    for (gap in listOf(0L, 250L, 800L)) {
+      runTest {
+        val h = Harness(TestScope(testScheduler))
+        val a = h.submit("A")
+        testScheduler.advanceTimeBy(gap)
+        val b = h.submit("B")
+
+        h.resolveNow("A")
+        testScheduler.advanceUntilIdle() // let A's completion run to exhaustion, alone
+        assertEquals("gap=$gap: A must not have launched", emptyList<String>(), h.launches)
+
+        h.resolveNow("B")
+        testScheduler.advanceUntilIdle()
+
+        assertEquals("gap=$gap: still exactly one launch", listOf("B"), h.launches)
+        assertEquals("gap=$gap: superseded", "superseded", a.outcome)
+        assertEquals("gap=$gap: B acted", "B", b.launched)
+      }
+    }
+  }
+
+  @Test
+  fun `a request that completed before the next one existed is a separate action`() = runTest {
+    // The deliberate counterpart, and why zero is not simply "less safe". Once A has resolved,
+    // launched and switched apps, a later tap is a NEW intention and must be honoured. Coalescing
+    // it would be a bug, not a fix. This is the behaviour a non-zero default would break.
+    val h = Harness(TestScope(testScheduler))
     val a = h.submit("A")
     h.resolveNow("A")
-    testScheduler.advanceTimeBy(800)
+    testScheduler.advanceUntilIdle() // A fully completes and acts, before B exists at all
+
+    assertEquals("A acted alone", listOf("A"), h.launches)
 
     val b = h.submit("B")
     h.resolveNow("B")
     testScheduler.advanceUntilIdle()
 
-    assertEquals("both act at this spacing", listOf("A", "B"), h.launches)
-    assertEquals("but the newer link is last, so it is what plays", "B", h.launches.last())
+    assertEquals("both act, deliberately", listOf("A", "B"), h.launches)
+    assertEquals("and the newer link is last, so it is what plays", "B", h.launches.last())
     assertEquals("resolved", a.outcome)
     assertEquals("resolved", b.outcome)
   }
 
   @Test
-  fun `a longer window would collapse the 800ms case to one launch`() = runTest {
-    // Evidence for the settle-window ruling: the same 800ms burst, with a 1000ms window.
+  fun `a synthetic non-zero window still coalesces a future arrival`() = runTest {
+    // The settle mechanism is OFF by default but must remain correct, so re-enabling it is a
+    // one-line change rather than a rework. This is the only case a window fixes: A completes at
+    // 0 ms, B arrives at 800 ms, and nothing but a window can suppress A's launch.
+    //
+    // It is kept as evidence of what a window buys — NOT as a reason to turn one on. No device
+    // trace has ever produced this shape; see DEFAULT_SETTLE_WINDOW_MILLIS.
     val h = Harness(TestScope(testScheduler), settleWindowMillis = 1_000L)
     val a = h.submit("A")
     h.resolveNow("A")
