@@ -5,10 +5,15 @@ import kotlin.math.abs
 /** A candidate together with why it scored the way it did. */
 data class ScoredMatch(
   val song: YouTubeSong,
+  /**
+   * Evidence score: title, artist and album only. Confidence is judged on this and nothing else,
+   * so no accumulation of small bonuses can lift a weak match over [MatchScorer.CONFIDENCE_THRESHOLD].
+   */
+  val core: Double,
+  /** Ordering score: [core] plus presentation bonuses. Decides *which* candidate, never *whether*. */
   val score: Double,
   val titleScore: Double,
   val artistScore: Double,
-  val durationScore: Double,
   val albumScore: Double,
   val vetoes: List<String>,
   val notes: List<String>,
@@ -17,11 +22,11 @@ data class ScoredMatch(
     get() = vetoes.isNotEmpty()
 
   fun explain(): String =
-    "score=%.3f (t=%.2f a=%.2f d=%.2f al=%.2f)%s".format(
+    "core=%.3f rank=%.3f (t=%.2f a=%.2f al=%.2f)%s".format(
+      core,
       score,
       titleScore,
       artistScore,
-      durationScore,
       albumScore,
       if (vetoed) " VETO[${vetoes.joinToString("|")}]" else "",
     )
@@ -38,9 +43,11 @@ data class MatchOutcome(
    */
   val insufficientEvidence: Boolean = false,
   /**
-   * True when the top two candidates are separated by nothing but YouTube's own ordering *and*
-   * they come from clearly different releases, with no Spotify album to arbitrate. Picking
-   * `result[0]` there would be a coin toss dressed up as a decision.
+   * True when a candidate close enough to the winner to be a coin toss is *not* the same recording
+   * — a different title, a different artist set, or a variant marker. Picking `result[0]` there
+   * would be a coin toss dressed up as a decision, so the user gets the search results instead.
+   *
+   * A near-tie between two releases of the *same* recording is benign and does not set this.
    */
   val ambiguous: Boolean = false,
 )
@@ -55,54 +62,53 @@ data class MatchOutcome(
 object MatchScorer {
 
   /**
-   * Minimum score for auto-play.
+   * Minimum *core* score for auto-play.
    *
-   * Measured against both live probes, the score distribution is strongly bimodal: the legitimate
-   * uploads land at 1.069–1.070 and *every* wrong candidate — covers, karaoke, instrumentals, live
-   * re-uploads, compilation-farm re-posts — is vetoed to 0.0. So the vetoes, not this number, are
-   * what keep the wrong song from playing.
+   * Core is `title + artist + album` with weights summing to 1.0. Presentation bonuses (official
+   * album link, artist channel, explicit agreement, YouTube's own ordering) are deliberately
+   * excluded: they may reorder candidates but must never manufacture confidence in a weak one.
    *
-   * The threshold guards the residual case where nothing is vetoed but the evidence is thin: a
-   * fuzzy title (~0.80), an artist that only matches as a substring (0.55) and an unreadable
-   * duration column together score ≈0.70. Anything weaker than that opens search instead.
-   *
-   * Note the maximum is ≈1.07, not 1.0: the official-upload bonuses are added on top of the
-   * weighted sum so that a perfect match still out-ranks a near-perfect one.
+   * Measured against the live probes the distribution is strongly bimodal — legitimate uploads sit
+   * near 1.0 and every wrong candidate (covers, karaoke, instrumentals, live re-uploads,
+   * compilation-farm re-posts) is vetoed to 0.0. So the vetoes, not this number, are what keep the
+   * wrong song from playing; the threshold only guards the residual "nothing vetoed but the
+   * evidence is thin" case.
    */
   const val CONFIDENCE_THRESHOLD = 0.70
 
+  // Core weights. MUST sum to 1.0.
   private const val WEIGHT_TITLE = 0.40
   private const val WEIGHT_ARTIST = 0.35
-  private const val WEIGHT_DURATION = 0.25
-
-  /** Beyond this many seconds apart it is simply not the same recording. */
-  const val MAX_DURATION_DELTA_SECONDS = 12
 
   /**
-   * Durations inside this bucket are treated as equally good rather than ranked by raw delta.
-   *
-   * This matters: for "Sunflower" the exact-duration candidate (2:38) sits on *Post Malone's own
-   * album* while the +1 s candidate (2:39) sits on the soundtrack album Spotify names. Ranking by
-   * smallest delta picks the wrong release; album evidence has to be what separates them.
+   * Album is a full weighted term, not a bonus, because it is the *only* signal that can separate
+   * two uploads of the same recording on different releases. For "Sunflower" the exact-duration
+   * candidate (2:38) sits on Post Malone's own album while the +1 s candidate (2:39) sits on the
+   * soundtrack album Spotify names — album evidence is what picks correctly there.
    */
-  private const val PERFECT_DURATION_DELTA_SECONDS = 3
-  private const val DURATION_ZERO_AT_SECONDS = 15
-  private const val MIN_ARTIST_SCORE = 0.25
+  private const val WEIGHT_ALBUM = 0.25
 
-  /** Album agreement is corroboration, never a requirement — the same recording is often reissued. */
-  private const val ALBUM_BONUS = 0.06
+  /**
+   * Beyond this many seconds apart it is simply not the same recording.
+   *
+   * This is duration's *only* job. It is deliberately not a scoring term: measured against the live
+   * "Sunflower" result set, duration proximity is anti-correlated with correctness — the exact
+   * 158 s matches are a wrong-album release and a compilation-farm upload, while the correct
+   * soundtrack release is 159 s. Rewarding proximity would promote exactly the wrong rows.
+   */
+  const val MAX_DURATION_DELTA_SECONDS = 12
+
+  private const val MIN_ARTIST_SCORE = 0.25
 
   private const val EXPLICIT_AGREE_BONUS = 0.02
   private const val EXPLICIT_DISAGREE_PENALTY = 0.06
 
   /**
-   * Score gap below which two candidates are "equally strong". Equal to the rank prior, so it means
-   * literally "nothing but YouTube's ordering separates these".
+   * Score gap below which two candidates are "equally strong", i.e. close enough that nothing but
+   * presentation separates them. Within this band every candidate must be the *same recording* as
+   * the winner or auto-play is refused.
    */
   private const val AMBIGUITY_MARGIN = 0.02
-
-  /** Unknown duration is neither evidence for nor against; slightly pessimistic. */
-  private const val UNKNOWN_DURATION_SCORE = 0.45
 
   /** Same idea for a row whose artist column we could not read. */
   private const val UNKNOWN_ARTIST_SCORE = 0.45
@@ -173,17 +179,12 @@ object MatchScorer {
   fun score(spotify: SpotifyTrackMeta, candidate: YouTubeSong): ScoredMatch {
     val titleScore = TextNormalizer.similarity(spotify.title, candidate.title)
     val artistScore = artistScore(spotify.artists, candidate.artists)
-    val albumScore =
-      if (spotify.album != null && candidate.album != null) {
-        TextNormalizer.similarity(spotify.album, candidate.album)
-      } else {
-        0.0
-      }
+    val albumKnown = spotify.album != null && candidate.album != null
+    val albumScore = if (albumKnown) TextNormalizer.similarity(spotify.album!!, candidate.album!!) else 0.0
 
     val spotifyDuration = spotify.durationSeconds
     val candidateDuration = candidate.durationSeconds
     val delta = if (spotifyDuration != null && candidateDuration != null) abs(spotifyDuration - candidateDuration) else null
-    val durationScore = durationScore(delta)
 
     val vetoes = ArrayList<String>()
     val notes = ArrayList<String>()
@@ -196,20 +197,28 @@ object MatchScorer {
     variantMarkers(spotify, candidate).forEach { vetoes += "variant:$it" }
     if (titleScore < 0.34) vetoes += "title"
 
-    var raw = WEIGHT_TITLE * titleScore + WEIGHT_ARTIST * artistScore + WEIGHT_DURATION * durationScore
+    // Evidence only. Duration contributes nothing here — see MAX_DURATION_DELTA_SECONDS.
+    //
+    // When either side has no album, album is not evidence *against* the candidate: the weight is
+    // renormalised across title and artist instead. Otherwise Spotify's page degrading to a shell
+    // would cap every candidate at 0.75 and silently push good matches under the threshold.
+    val core =
+      if (albumKnown) {
+        WEIGHT_TITLE * titleScore + WEIGHT_ARTIST * artistScore + WEIGHT_ALBUM * albumScore
+      } else {
+        (WEIGHT_TITLE * titleScore + WEIGHT_ARTIST * artistScore) / (WEIGHT_TITLE + WEIGHT_ARTIST)
+      }
+    if (albumKnown && albumScore > 0.8) notes += "album-match"
 
-    // Album agreement is the tie-breaker between two uploads of the same recording on different
-    // releases, and it must outweigh YouTube's own ordering.
-    if (albumScore > 0.0) {
-      raw += ALBUM_BONUS * albumScore
-      if (albumScore > 0.8) notes += "album-match"
-    }
+    // Ordering only, from here down. Nothing below may affect `core`, and therefore nothing below
+    // can push a weak match over the confidence threshold.
+    var rank = core
     if (candidate.hasAlbumLink) {
-      raw += 0.02
+      rank += 0.02
       notes += "album-link"
     }
     if (candidate.hasArtistChannel) {
-      raw += 0.02
+      rank += 0.02
       notes += "artist-channel"
     }
     // Clean and explicit masters are different recordings; rank the matching one first rather than
@@ -218,24 +227,24 @@ object MatchScorer {
     val candidateExplicit = candidate.isExplicit
     if (spotifyExplicit != null && candidateExplicit != null) {
       if (spotifyExplicit == candidateExplicit) {
-        raw += EXPLICIT_AGREE_BONUS
+        rank += EXPLICIT_AGREE_BONUS
         notes += "explicit-match"
       } else {
-        raw -= EXPLICIT_DISAGREE_PENALTY
+        rank -= EXPLICIT_DISAGREE_PENALTY
         notes += "explicit-mismatch"
       }
     }
     // Tiny prior on YouTube's own ranking, purely to break ties deterministically.
-    raw += 0.02 * (1.0 - (candidate.position.coerceAtMost(20) / 20.0))
+    rank += 0.02 * (1.0 - (candidate.position.coerceAtMost(20) / 20.0))
 
-    val score = if (vetoes.isEmpty()) raw.coerceAtLeast(0.0) else 0.0
+    val vetoed = vetoes.isNotEmpty()
 
     return ScoredMatch(
       song = candidate,
-      score = score,
+      core = if (vetoed) 0.0 else core.coerceAtLeast(0.0),
+      score = if (vetoed) 0.0 else rank.coerceAtLeast(0.0),
       titleScore = titleScore,
       artistScore = artistScore,
-      durationScore = durationScore,
       albumScore = albumScore,
       vetoes = vetoes,
       notes = notes,
@@ -244,31 +253,31 @@ object MatchScorer {
 
   fun best(spotify: SpotifyTrackMeta, candidates: List<YouTubeSong>): MatchOutcome {
     // Spotify's page occasionally comes back as a JavaScript shell with no Open Graph tags, and the
-    // oEmbed fallback carries a title and nothing else. A bare title is not enough to tell an
-    // original from a cover, so never auto-play on it — open search and let the user choose.
-    val insufficientEvidence = spotify.artists.isEmpty() && spotify.durationSeconds == null
+    // oEmbed fallback carries a title and nothing else. Without artists the artist veto — the only
+    // thing that rejects covers and karaoke — cannot run at all, so confidence is structurally
+    // unavailable however well a candidate scores. Duration's absence is NOT disqualifying: it is
+    // only an eligibility gate, so title + artist + album remain sufficient without it.
+    val insufficientEvidence = spotify.artists.isEmpty()
     if (candidates.isEmpty()) {
       return MatchOutcome(null, confident = false, ranked = emptyList(), insufficientEvidence = insufficientEvidence)
     }
     val ranked =
       candidates.map { score(spotify, it) }.sortedWith(compareByDescending<ScoredMatch> { it.score }.thenBy { it.song.position })
     val top = ranked.firstOrNull()
-    val runnerUp = ranked.getOrNull(1)?.takeIf { !it.vetoed }
 
-    // Spotify's canonical page intermittently returns a JavaScript shell, which costs us the album.
-    // Without it, two uploads of the same title and duration on *different* releases are separated
-    // by nothing but YouTube's ranking prior — that is a coin toss, so hand the user the results.
+    // Equivalence cluster. Everything within AMBIGUITY_MARGIN of the winner is close enough that
+    // only presentation separates it, so each one must be the *same recording* — same normalised
+    // title, same artist set, no variant markers. Two releases of one recording tying is benign and
+    // plays; a near-tie against something genuinely different is a coin toss and opens search.
     val ambiguous =
       top != null &&
         !top.vetoed &&
-        runnerUp != null &&
-        top.score - runnerUp.score <= AMBIGUITY_MARGIN &&
-        top.albumScore == 0.0 &&
-        runnerUp.albumScore == 0.0 &&
-        albumsClearlyDiffer(top.song.album, runnerUp.song.album)
+        ranked.drop(1).any { rival ->
+          !rival.vetoed && top.score - rival.score <= AMBIGUITY_MARGIN && !sameRecording(top, rival)
+        }
 
     val confident =
-      top != null && !top.vetoed && top.score >= CONFIDENCE_THRESHOLD && !insufficientEvidence && !ambiguous
+      top != null && !top.vetoed && top.core >= CONFIDENCE_THRESHOLD && !insufficientEvidence && !ambiguous
     return MatchOutcome(
       best = top,
       confident = confident,
@@ -278,22 +287,19 @@ object MatchScorer {
     )
   }
 
-  /** Only "different release", not "slightly different edition" — a deluxe reissue is not a conflict. */
-  private fun albumsClearlyDiffer(a: String?, b: String?): Boolean {
-    if (a == null || b == null) return false
-    return TextNormalizer.similarity(a, b) < 0.5
+  /**
+   * Two candidates are the same recording when their titles normalise identically, their artist
+   * sets match, and neither carries a variant marker. Different releases of one recording satisfy
+   * this; a cover, a karaoke version or a different song sharing a title does not.
+   */
+  private fun sameRecording(a: ScoredMatch, b: ScoredMatch): Boolean {
+    if (a.vetoes.isNotEmpty() || b.vetoes.isNotEmpty()) return false
+    if (TextNormalizer.canonical(a.song.title) != TextNormalizer.canonical(b.song.title)) return false
+    val artistsA = a.song.artists.map { TextNormalizer.canonical(it) }.filter { it.isNotEmpty() }.toSet()
+    val artistsB = b.song.artists.map { TextNormalizer.canonical(it) }.filter { it.isNotEmpty() }.toSet()
+    if (artistsA.isEmpty() || artistsB.isEmpty()) return false
+    return artistsA == artistsB
   }
-
-  private fun durationScore(delta: Int?): Double =
-    when {
-      delta == null -> UNKNOWN_DURATION_SCORE
-      delta <= PERFECT_DURATION_DELTA_SECONDS -> 1.0
-      delta >= DURATION_ZERO_AT_SECONDS -> 0.0
-      else ->
-        1.0 -
-          (delta - PERFECT_DURATION_DELTA_SECONDS).toDouble() /
-          (DURATION_ZERO_AT_SECONDS - PERFECT_DURATION_DELTA_SECONDS)
-    }
 
   /**
    * Requires at least one *whole* artist name to match. Partial token overlap alone is capped low,

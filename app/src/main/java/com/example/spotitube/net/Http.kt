@@ -2,6 +2,8 @@ package com.example.spotitube.net
 
 import java.io.IOException
 import java.net.HttpURLConnection
+import java.net.URI
+import java.net.URISyntaxException
 import java.net.URL
 import java.util.zip.GZIPInputStream
 
@@ -60,21 +62,49 @@ internal object Http {
     url: String,
     headers: Map<String, String> = emptyMap(),
     allow: HostAllowList? = null,
+    maxRedirects: Int = MAX_REDIRECTS,
   ): String {
     var current = checkHost(url, allow)
-    for (hop in 0 until MAX_REDIRECTS) {
+    for (hop in 0 until maxRedirects) {
       val connection = open(current, "GET", headers)
       connection.instanceFollowRedirects = false
       try {
         val code = connection.responseCode
         if (code !in 300..399) return current
         val location = connection.getHeaderField("Location") ?: return current
-        current = checkHost(URL(URL(current), location).toString(), allow)
+        current = nextRedirectUrl(current, location, allow)
       } finally {
         connection.disconnect()
       }
     }
     return current
+  }
+
+  /**
+   * Resolves a `Location` header against the current URL and vets it. Pure, so the hostile cases
+   * can be unit-tested without a server.
+   *
+   * Rejects any scheme other than http/https. This is not theoretical: with an Android Chrome
+   * User-Agent, `https://spotify.link/{code}` answers 307 with
+   * `Location: intent://open?...#Intent;scheme=spotify;package=com.spotify.music;...`, an Android
+   * intent URI. `java.net.URL` cannot even represent that, so without an explicit check the failure
+   * surfaces as an opaque `MalformedURLException`.
+   */
+  internal fun nextRedirectUrl(currentUrl: String, location: String, allow: HostAllowList?): String {
+    val next =
+      try {
+        URI(currentUrl).resolve(location.trim())
+      } catch (e: IllegalArgumentException) {
+        throw IOException("Unparsable redirect target '${location.take(120)}': ${e.message}")
+      } catch (e: URISyntaxException) {
+        throw IOException("Unparsable redirect target '${location.take(120)}': ${e.message}")
+      }
+
+    val scheme = next.scheme?.lowercase()
+    if (scheme != "http" && scheme != "https") {
+      throw IOException("Refusing to follow non-HTTP redirect scheme '$scheme'")
+    }
+    return checkHost(next.toString(), allow)
   }
 
   private fun request(
@@ -99,7 +129,7 @@ internal object Http {
         if (lastCode in 300..399) {
           val location = connection.getHeaderField("Location")
           if (location != null) {
-            current = checkHost(URL(URL(current), location).toString(), allow)
+            current = nextRedirectUrl(current, location, allow)
             continue
           }
         }

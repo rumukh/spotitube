@@ -1,5 +1,6 @@
 package com.example.spotitube
 
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.verify.domain.DomainVerificationManager
@@ -32,6 +33,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -40,9 +42,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.example.spotitube.core.LinkHandling
 import com.example.spotitube.core.ResolveOutcome
 import com.example.spotitube.core.SpotifyLinkParser
@@ -79,6 +84,20 @@ private fun HomeScreen() {
   val linkHandling =
     remember(linkHandlingEnabled, spotifyInstalled) { LinkHandling.of(linkHandlingEnabled, spotifyInstalled) }
 
+  // Zero-setup path: if the clipboard already holds a Spotify link, offer to open it in one tap.
+  // Read only while genuinely foregrounded and only when it parses as a Spotify link; never logged,
+  // never persisted, and never launched without the user tapping — an unprompted launch would be
+  // both spooky and, on Android 12+, accompanied by a baffling "pasted from your clipboard" toast.
+  var clipboardLink by remember { mutableStateOf<String?>(null) }
+  val lifecycleOwner = LocalLifecycleOwner.current
+  DisposableEffect(lifecycleOwner) {
+    val observer = LifecycleEventObserver { _, event ->
+      if (event == Lifecycle.Event.ON_RESUME) clipboardLink = spotifyLinkInClipboard(context)
+    }
+    lifecycleOwner.lifecycle.addObserver(observer)
+    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+  }
+
   Column(
     modifier = Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState()).padding(20.dp),
     verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -89,6 +108,33 @@ private fun HomeScreen() {
         "playing it. Albums, playlists, artists and podcasts are handed straight back to Spotify.",
       style = MaterialTheme.typography.bodyMedium,
     )
+
+    clipboardLink?.let { copied ->
+      val parsedClip = remember(copied) { SpotifyLinkParser.findIn(copied) }
+      if (parsedClip != null) {
+        Card(modifier = Modifier.fillMaxWidth()) {
+          Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Link on your clipboard", style = MaterialTheme.typography.titleMedium)
+            Text(
+              "You copied a Spotify ${LinkHandlerActivity.describe(parsedClip.type).lowercase()} link.",
+              style = MaterialTheme.typography.bodySmall,
+            )
+            Button(
+              onClick = {
+                context.startActivity(
+                  Intent(context, LinkHandlerActivity::class.java)
+                    .setAction(Intent.ACTION_SEND)
+                    .setType("text/plain")
+                    .putExtra(Intent.EXTRA_TEXT, copied)
+                )
+              },
+            ) {
+              Text(if (parsedClip.isTrack) "Open in YouTube Music" else "Open in Spotify")
+            }
+          }
+        }
+      }
+    }
 
     Card(modifier = Modifier.fillMaxWidth()) {
       Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -215,6 +261,18 @@ private fun HomeScreen() {
       style = MaterialTheme.typography.labelSmall,
     )
   }
+}
+
+/**
+ * The Spotify link on the clipboard, or `null`. Returns only what parses as a Spotify link, so
+ * arbitrary clipboard content never enters the app's state, and is never logged or persisted.
+ */
+private fun spotifyLinkInClipboard(context: Context): String? {
+  val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return null
+  val item = runCatching { clipboard.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0) }.getOrNull()
+  val text = item?.coerceToText(context)?.toString()?.trim().orEmpty()
+  if (text.isEmpty() || text.length > 2048) return null
+  return if (SpotifyLinkParser.findIn(text) != null) text else null
 }
 
 /** Executes the full resolve pipeline and renders it as text. Never launches an app. */

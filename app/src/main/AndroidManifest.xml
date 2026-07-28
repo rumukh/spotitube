@@ -68,8 +68,12 @@
                 <data android:scheme="http" />
                 <data android:host="open.spotify.com" />
                 <data android:host="play.spotify.com" />
-                <data android:host="spotify.link" />
-                <data android:host="spotify.app.link" />
+                <!--
+                    spotify.link / spotify.app.link are deliberately absent. Spotify publishes
+                    assetlinks.json for both, so they are verified to com.spotify.music and a filter
+                    here can never win them. Short links reach us via the SEND share target below,
+                    where they are resolved with a bounded, host-allowlisted redirect chain.
+                -->
             </intent-filter>
 
             <!-- The reliable path on Android 12+: friend's message -> Share -> Spotitube. -->

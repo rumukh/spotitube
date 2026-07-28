@@ -3,6 +3,7 @@ package com.example.spotitube.core
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -23,6 +24,50 @@ class InnerTubeParserTest {
     assertTrue(first.hasArtistChannel)
     assertEquals(0, first.position)
     assertEquals("https://music.youtube.com/watch?v=lYBUbBu4W08", first.watchUrl)
+  }
+
+  @Test
+  fun `a malformed videoId yields no watch url at all`() {
+    // YouTube Music claims music.youtube.com with a path pattern of `.*`, so a bad watch URL opens
+    // an indeterminate screen instead of throwing ActivityNotFoundException. The guard therefore has
+    // to be here, and these assertions observe the ABSENCE of a URL rather than re-testing a regex.
+    val bad =
+      listOf(
+        "",
+        "short",
+        "waytoolongvideoid",
+        "eleven!chars",
+        "lYBUbBu4W0",
+        "аYBUbBu4W08", // leading Cyrillic а, same shape as Latin a
+      )
+    for (id in bad) {
+      val song = YouTubeSong(videoId = id, title = "x", artists = listOf("y"))
+      assertNull("expected no watch url for '$id'", song.watchUrl)
+    }
+  }
+
+  @Test
+  fun `real video ids still produce a watch url on the music host`() {
+    // The inverse guard: over-strict validation would silently degrade every play to a search.
+    for (id in listOf("lYBUbBu4W08", "r7Rn4ryE_w8", "dQw4w9WgXcQ", "_-aBcDeFgH1")) {
+      val url = YouTubeSong(videoId = id, title = "x", artists = listOf("y")).watchUrl
+      assertEquals("https://music.youtube.com/watch?v=$id", url)
+    }
+  }
+
+  @Test
+  fun `every launch url we can emit is on the music host`() {
+    // www.youtube.com is NOT claimed by YouTube Music: measured on-device, an explicit intent for it
+    // resolves to NO ACTIVITY, so a stray host would silently land in the YouTube app or a browser.
+    val urls =
+      listOf(
+        YouTubeSong(videoId = "lYBUbBu4W08", title = "x", artists = listOf("y")).watchUrl!!,
+        YouTubeMusic.searchUrl("rick astley never gonna give you up"),
+        SpotitubeResolver.youTubeMusicSearchUrl("post malone sunflower"),
+      )
+    for (url in urls) {
+      assertTrue("not on the music host: $url", url.startsWith("https://music.youtube.com/"))
+    }
   }
 
   @Test

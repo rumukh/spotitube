@@ -23,11 +23,38 @@ data class YouTubeSong(
   /** Zero-based rank in YouTube's own ordering; used only to break otherwise-equal scores. */
   val position: Int = 0,
 ) {
-  val watchUrl: String
-    get() = "https://music.youtube.com/watch?v=$videoId"
+  /**
+   * `null` when [videoId] is not a well-formed YouTube id.
+   *
+   * This has to be checked here rather than relying on `ActivityNotFoundException`: YouTube Music
+   * declares `music.youtube.com` with a path pattern of `.*`, so it swallows *any* URL on that host
+   * — a malformed id would launch "successfully" onto an indeterminate screen with nothing for us
+   * to catch. Callers fall back to the search page instead.
+   */
+  val watchUrl: String?
+    get() = if (isValidVideoId(videoId)) "${YouTubeMusic.ORIGIN}/watch?v=$videoId" else null
 
   val artistLine: String
     get() = artists.joinToString(", ")
+
+  companion object {
+    private val VIDEO_ID = Regex("""^[A-Za-z0-9_-]{11}$""")
+
+    fun isValidVideoId(id: String): Boolean = VIDEO_ID.matches(id)
+  }
+}
+
+/** Single source of truth for the YouTube Music origin. */
+object YouTubeMusic {
+  /**
+   * Must be `music.youtube.com`. Measured on-device: `https://www.youtube.com/watch?v=…` with
+   * `setPackage(com.google.android.apps.youtube.music)` resolves to NO ACTIVITY — YouTube Music does
+   * not claim that host, so a stray `www.` URL silently lands in the YouTube app or a browser.
+   */
+  const val ORIGIN = "https://music.youtube.com"
+
+  fun searchUrl(query: String): String =
+    "$ORIGIN/search?q=" + java.net.URLEncoder.encode(query, "UTF-8").replace("+", "%20")
 }
 
 /**

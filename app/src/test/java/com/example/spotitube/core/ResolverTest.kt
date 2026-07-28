@@ -175,13 +175,14 @@ class ResolverTest {
       }
     val outcome = SpotitubeResolver(spotify, rickYouTube()).resolve(rickUrl)
     val search = outcome as? ResolveOutcome.SearchOnYouTubeMusic ?: error("expected search, got $outcome")
-    assertTrue(search.reason, search.reason.contains("title-only"))
+    assertTrue(search.reason, search.reason.contains("no artists"))
     assertEquals("Never Gonna Give You Up", search.query)
   }
 
   @Test
-  fun `an unresolvable release choice opens search rather than guessing`() = runTest {
-    // Spotify page degraded to no album; YouTube offers two equally strong but different releases.
+  fun `two releases of the same recording play rather than opening search`() = runTest {
+    // Spotify page degraded to no album; YouTube offers the soundtrack upload and the Hollywood's
+    // Bleeding upload. Same title, same artists — the same recording on two releases — so play it.
     val spotify =
       object : SpotifyMetadataSource {
         override suspend fun expandShortLink(link: SpotifyLink): SpotifyLink? = null
@@ -199,8 +200,8 @@ class ResolverTest {
           InnerTubeParser.parseSongs(Fixtures.read(Fixtures.SUNFLOWER_SEARCH_JSON))
       }
     val outcome = SpotitubeResolver(spotify, youTube).resolve("https://open.spotify.com/track/3KkXRkHbMCARz0aVfEt68P")
-    val search = outcome as? ResolveOutcome.SearchOnYouTubeMusic ?: error("expected search, got $outcome")
-    assertTrue(search.reason, search.reason.contains("different releases"))
+    val play = outcome as? ResolveOutcome.PlayOnYouTubeMusic ?: error("expected play, got $outcome")
+    assertEquals("r7Rn4ryE_w8", play.videoId)
   }
 
   @Test

@@ -186,15 +186,33 @@ class MatchScorerTest {
   }
 
   @Test
-  fun `without a spotify album two different releases are ambiguous rather than a coin toss`() {
+  fun `two releases of the same recording are benign and still play`() {
     // Same live result set, but Spotify's canonical page failed so we have no album to arbitrate.
     // The top two are the soundtrack upload and the Hollywood's Bleeding upload — same title, same
-    // artists, durations one second apart. Only YouTube's ordering separates them, so pick neither.
+    // artists, durations one second apart. They are the SAME RECORDING on two different releases,
+    // so whichever we pick the user hears the song their friend sent. Sending them to a search page
+    // over a 0.001 score difference would be caution theatre, not safety.
     val outcome = MatchScorer.best(sunflower, sunflowerCandidates())
-    assertTrue("expected ambiguity, got ${outcome.best?.explain()}", outcome.ambiguous)
-    assertFalse(outcome.confident)
-    // The ranking is still produced; it just is not acted on.
+    assertFalse("same-recording near-tie must not be ambiguous: ${outcome.best?.explain()}", outcome.ambiguous)
+    assertTrue("expected confidence, got ${outcome.best?.explain()}", outcome.confident)
     assertEquals("r7Rn4ryE_w8", outcome.best!!.song.videoId)
+  }
+
+  @Test
+  fun `a near tie against a different recording opens search`() {
+    // The dangerous shape: something scoring within the margin of the winner that is NOT the same
+    // recording. Here a same-duration, same-title upload by a different artist. One of them is
+    // wrong and we cannot tell which, so hand the user the results instead of guessing.
+    val meta =
+      SpotifyTrackMeta(title = "Sunflower", artists = listOf("Post Malone", "Swae Lee"), durationSeconds = 158)
+    val candidates =
+      listOf(
+        song(videoId = "aaaaaaaaaaa", title = "Sunflower", artists = listOf("Post Malone", "Swae Lee"), duration = 158),
+        song(videoId = "bbbbbbbbbbb", title = "Sunflower", artists = listOf("Post Malone"), duration = 158, position = 1),
+      )
+    val outcome = MatchScorer.best(meta, candidates)
+    assertTrue("expected ambiguity, got ${outcome.ranked.joinToString { it.explain() }}", outcome.ambiguous)
+    assertFalse(outcome.confident)
   }
 
   @Test
@@ -392,13 +410,21 @@ class MatchScorerTest {
   }
 
   @Test
-  fun `an artist alone or a duration alone is enough evidence`() {
-    val artistOnly = SpotifyTrackMeta(title = "Never Gonna Give You Up", artists = listOf("Rick Astley"))
-    assertTrue(MatchScorer.best(artistOnly, rickCandidates()).confident)
-
+  fun `artists are mandatory but a missing duration is not`() {
+    // Artists are the load-bearing defence: the artist veto is what rejects covers and karaoke, so
+    // without them confidence is structurally unavailable however well a candidate scores.
     val durationOnly =
       SpotifyTrackMeta(title = "Never Gonna Give You Up", artists = emptyList(), durationSeconds = 214)
-    assertTrue(MatchScorer.best(durationOnly, rickCandidates()).confident)
+    val noArtists = MatchScorer.best(durationOnly, rickCandidates())
+    assertFalse("no artists must never auto-play: ${noArtists.best?.explain()}", noArtists.confident)
+    assertTrue(noArtists.insufficientEvidence)
+
+    // Duration is only an eligibility gate, so its absence is not disqualifying. Blocking here would
+    // send legitimate links to a search page for no safety gain.
+    val artistOnly = SpotifyTrackMeta(title = "Never Gonna Give You Up", artists = listOf("Rick Astley"))
+    val outcome = MatchScorer.best(artistOnly, rickCandidates())
+    assertTrue("artists without a duration should still play: ${outcome.best?.explain()}", outcome.confident)
+    assertEquals("lYBUbBu4W08", outcome.best!!.song.videoId)
   }
 
   @Test

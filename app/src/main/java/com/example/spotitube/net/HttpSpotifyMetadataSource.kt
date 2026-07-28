@@ -33,10 +33,23 @@ class HttpSpotifyMetadataSource(
 
   override suspend fun expandShortLink(link: SpotifyLink): SpotifyLink? =
     withContext(Dispatchers.IO) {
+      // Pinned to the app's own User-Agent on purpose. A mobile-browser UA makes spotify.link
+      // answer with `intent://…;scheme=spotify;package=com.spotify.music`, which is not a URL we
+      // can follow, and a desktop UA stops on a Branch landing page. The truthful UA is the only
+      // one observed to walk through to a canonical open.spotify.com address.
       val finalUrl =
-        runCatching { Http.resolveFinalUrl(link.canonicalUrl, headersFor(userAgents.first()), SPOTIFY_HOSTS) }
+        runCatching {
+          Http.resolveFinalUrl(
+            link.canonicalUrl,
+            headersFor(APP_USER_AGENT),
+            SPOTIFY_HOSTS,
+            maxRedirects = SHORT_LINK_MAX_HOPS,
+          )
+        }
           .getOrNull()
           ?: return@withContext null
+      // The parser drops every query parameter, so `si`, `_branch_*` and UTM values from the
+      // Branch hop never make it into anything we request or hand on.
       SpotifyLinkParser.parse(finalUrl)?.takeIf { it.type != SpotifyEntityType.SHORT_LINK }
     }
 
@@ -100,6 +113,14 @@ class HttpSpotifyMetadataSource(
 
   companion object {
     /**
+     * Truthful, and the only UA observed to resolve `spotify.link` all the way to a canonical URL.
+     */
+    const val APP_USER_AGENT = "Spotitube/1.0 (+Android)"
+
+    /** `spotify.link` -> `spotify.app.link` -> `open.spotify.com` is three hops; allow one spare. */
+    private const val SHORT_LINK_MAX_HOPS = 4
+
+    /**
      * A `spotify.link` short URL redirects wherever Spotify points it; refuse to follow it off
      * Spotify's own domains so a crafted link cannot aim this client at an arbitrary host.
      */
@@ -108,7 +129,7 @@ class HttpSpotifyMetadataSource(
     val DEFAULT_USER_AGENTS =
       listOf(
         // Truthful and currently served rich data by both endpoints.
-        "Spotitube/1.0 (+Android)",
+        APP_USER_AGENT,
         // Unfurler UA: ~28 KB canonical response, all og:/music: tags present.
         "facebookexternalhit/1.1",
         // Mobile Chrome: ~139 KB but also fully server-rendered — independent fallback.

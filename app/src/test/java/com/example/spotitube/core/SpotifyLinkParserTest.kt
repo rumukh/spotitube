@@ -121,9 +121,35 @@ class SpotifyLinkParserTest {
         "https://open.spotify.com/track/ПТG3Z6ehGkBFwjybzWkR8",
         "spotify:track:４PTG3Z6ehGkBFwjybzWkR8x",
         "https://open.spotify.com/track/" + "a".repeat(200),
+        // Exactly-22 is the rule, so 21 and 23 base62 chars must both be rejected.
+        "https://open.spotify.com/track/" + "a".repeat(21),
+        "https://open.spotify.com/track/" + "a".repeat(23),
+        "spotify:album:" + "a".repeat(21),
       )
     for (input in junk) {
       assertNull("expected null for: $input", SpotifyLinkParser.findIn(input))
+    }
+  }
+
+  @Test
+  fun `exactly twenty two base62 chars is accepted for every type`() {
+    // The inverse guard: over-strict validation would stop us synthesising a spotify: URI and
+    // silently degrade the bounce. Real ids from the fixtures, one per forwarded type.
+    val ids =
+      mapOf(
+        "track" to "4PTG3Z6ehGkBFwjybzWkR8",
+        "album" to "35s58BRTGAEWztPo9WqCIs",
+        "artist" to "0gxyHStUsqpMadRV0Di1Qt",
+        "playlist" to "37i9dQZF1DXcBWIGoYBM5M",
+        "episode" to "17lkkkBsHeYS3pigEJMVVY",
+        "show" to "3AAg9Ks4zVJtJKLirq5BVD",
+      )
+    for ((type, id) in ids) {
+      assertEquals(22, id.length)
+      val fromUrl = SpotifyLinkParser.findIn("https://open.spotify.com/$type/$id")
+      assertNotNull("expected a link for $type/$id", fromUrl)
+      assertEquals(id, fromUrl!!.id)
+      assertNotNull("expected a link for spotify:$type:$id", SpotifyLinkParser.findIn("spotify:$type:$id"))
     }
   }
 

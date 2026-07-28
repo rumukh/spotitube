@@ -78,22 +78,27 @@ class SpotitubeResolver(
 
     val outcome = MatchScorer.best(meta, candidates)
     val best = outcome.best
-    if (!outcome.confident || best == null) {
+    // A malformed videoId cannot be launched: YouTube Music claims its whole host with a `.*` path
+    // pattern, so a bad watch URL opens an indeterminate screen instead of throwing. Fall back to
+    // search rather than sending the user somewhere arbitrary.
+    val watchUrl = best?.song?.watchUrl
+    if (!outcome.confident || best == null || watchUrl == null) {
       val why =
         when {
-          outcome.insufficientEvidence -> "title-only Spotify metadata: not enough to auto-play"
+          outcome.insufficientEvidence -> "no artists in Spotify metadata: not enough to auto-play"
           outcome.ambiguous ->
-            "two equally strong candidates from different releases and no Spotify album to choose between them"
+            "a near-tied candidate is a different recording, so the winner is not clearly right"
           best == null -> "nothing ranked"
           best.vetoed -> "best candidate vetoed: ${best.vetoes.joinToString(",")}"
-          else -> "best score %.2f below threshold %.2f".format(best.score, MatchScorer.CONFIDENCE_THRESHOLD)
+          watchUrl == null -> "malformed videoId"
+          else -> "best score %.2f below threshold %.2f".format(best.core, MatchScorer.CONFIDENCE_THRESHOLD)
         }
       return ResolveOutcome.SearchOnYouTubeMusic(query, searchUrl, why)
     }
 
     return ResolveOutcome.PlayOnYouTubeMusic(
       videoId = best.song.videoId,
-      url = best.song.watchUrl,
+      url = watchUrl,
       description = "${best.song.artistLine} — ${best.song.title}",
       score = best.score,
       spotify = meta,
@@ -101,7 +106,6 @@ class SpotitubeResolver(
   }
 
   companion object {
-    fun youTubeMusicSearchUrl(query: String): String =
-      "https://music.youtube.com/search?q=" + java.net.URLEncoder.encode(query, "UTF-8").replace("+", "%20")
+    fun youTubeMusicSearchUrl(query: String): String = YouTubeMusic.searchUrl(query)
   }
 }
