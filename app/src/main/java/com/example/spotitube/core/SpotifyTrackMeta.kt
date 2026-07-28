@@ -1,5 +1,26 @@
 package com.example.spotitube.core
 
+/**
+ * Which source(s) produced a [SpotifyTrackMeta].
+ *
+ * Recorded so a bad match in the field can be traced to the path that produced it — the sources
+ * differ in what they carry (the embed has no album; oEmbed has only a title), so knowing which one
+ * won explains most surprising results without reproducing them.
+ */
+enum class MetadataSource {
+  /** Structured `__NEXT_DATA__` only — no album available. */
+  EMBED,
+
+  /** Open Graph tags only; the embed failed or was unparsable. */
+  OPEN_GRAPH,
+
+  /** Both, merged. The normal healthy path. */
+  EMBED_AND_OPEN_GRAPH,
+
+  /** Degraded last resort: title only, never enough to auto-play. */
+  OEMBED_TITLE_ONLY,
+}
+
 /** The bits of a Spotify track page we actually use for matching. */
 data class SpotifyTrackMeta(
   val title: String,
@@ -16,6 +37,8 @@ data class SpotifyTrackMeta(
   /** Spotify's own playability for this market. Logged as a diagnostic; never gates playback. */
   val isPlayable: Boolean? = null,
   val playabilityReason: String? = null,
+  /** Which endpoint(s) this came from. Diagnostic only; never affects matching. */
+  val source: MetadataSource? = null,
 ) {
   val artistLine: String
     get() = artists.joinToString(", ")

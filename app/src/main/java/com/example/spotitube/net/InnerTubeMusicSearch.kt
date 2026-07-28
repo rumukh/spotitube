@@ -1,6 +1,10 @@
 package com.example.spotitube.net
 
+import android.util.Log
+import com.example.spotitube.LinkHandlerActivity
 import com.example.spotitube.core.InnerTubeParser
+import com.example.spotitube.core.ShelfStrategy
+import com.example.spotitube.core.YouTubeMusic
 import com.example.spotitube.core.YouTubeMusicSearch
 import com.example.spotitube.core.YouTubeSong
 import kotlinx.coroutines.Dispatchers
@@ -21,7 +25,13 @@ class InnerTubeMusicSearch : YouTubeMusicSearch {
       val response = runCatching { Http.postJson(ENDPOINT, requestBody(query), HEADERS, YOUTUBE_HOSTS) }.getOrNull()
         ?: return@withContext emptyList()
       if (!response.isSuccessful) return@withContext emptyList()
-      InnerTubeParser.parseSongs(response.body)
+      val parse = InnerTubeParser.parseSongsWithStrategy(response.body)
+      if (parse.strategy == ShelfStrategy.RECOVERED_ENVELOPE) {
+        // Silent degradation: results still look normal, so without this line nobody would ever
+        // learn that YouTube changed the documented shape.
+        Log.w(LinkHandlerActivity.TAG, "SHELF strategy=RECOVERED_ENVELOPE rows=${parse.songs.size}")
+      }
+      parse.songs
     }
 
   /** Built by hand rather than with a serializer so the client payload stays byte-for-byte obvious. */
@@ -32,7 +42,7 @@ class InnerTubeMusicSearch : YouTubeMusicSearch {
   }
 
   companion object {
-    const val ENDPOINT = "https://music.youtube.com/youtubei/v1/search?prettyPrint=false"
+    const val ENDPOINT = "${YouTubeMusic.ORIGIN}/youtubei/v1/search?prettyPrint=false"
     private const val CLIENT_NAME = "WEB_REMIX"
     private const val CLIENT_VERSION = "1.20241202.01.00"
 
@@ -43,10 +53,14 @@ class InnerTubeMusicSearch : YouTubeMusicSearch {
 
     private val HEADERS =
       mapOf(
-        "Origin" to "https://music.youtube.com",
-        "Referer" to "https://music.youtube.com/",
+        // Derived from the single source of truth: InnerTube rejects a mismatched Origin, so these
+        // must never drift from the host we actually call.
+        "Origin" to YouTubeMusic.ORIGIN,
+        "Referer" to "${YouTubeMusic.ORIGIN}/",
         "Accept" to "*/*",
         "Accept-Language" to "en-US,en;q=0.9",
+        // A desktop browser UA here is deliberate and unrelated to the short-link UA policy: this
+        // is the web client InnerTube expects, and it is a POST to an API, not a Branch redirect.
         "User-Agent" to
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) " +
           "Chrome/131.0.0.0 Safari/537.36",

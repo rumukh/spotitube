@@ -44,6 +44,21 @@ data class YouTubeSong(
   }
 }
 
+/** Which envelope path the shelf rows came from. Diagnostic only; never affects ranking. */
+enum class ShelfStrategy {
+  /** The documented `tabbedSearchResultsRenderer` envelope — the healthy path. */
+  DOCUMENTED,
+
+  /** The envelope moved and rows were recovered by walking the document. Signals YouTube drift. */
+  RECOVERED_ENVELOPE,
+
+  /** No rows at all. */
+  NONE,
+}
+
+/** Rows plus the path that found them. */
+data class ShelfParse(val songs: List<YouTubeSong>, val strategy: ShelfStrategy)
+
 /** Single source of truth for the YouTube Music origin. */
 object YouTubeMusic {
   /**
@@ -74,18 +89,30 @@ object InnerTubeParser {
     isLenient = true
   }
 
-  fun parseSongs(body: String?): List<YouTubeSong> {
-    if (body.isNullOrBlank()) return emptyList()
-    val root = runCatching { json.parseToJsonElement(body) }.getOrNull() ?: return emptyList()
+  fun parseSongs(body: String?): List<YouTubeSong> = parseSongsWithStrategy(body).songs
 
-    val items = songItems(root)
+  /**
+   * As [parseSongs], but also reports which envelope path produced the rows.
+   *
+   * Worth surfacing: [ShelfStrategy.RECOVERED_ENVELOPE] means YouTube changed the documented shape
+   * and we are running on the tolerant path. That is a silent degradation — results still look
+   * normal — so it is the signal that this parser needs revisiting, and it is invisible without
+   * instrumentation.
+   */
+  fun parseSongsWithStrategy(body: String?): ShelfParse {
+    if (body.isNullOrBlank()) return ShelfParse(emptyList(), ShelfStrategy.NONE)
+    val root =
+      runCatching { json.parseToJsonElement(body) }.getOrNull()
+        ?: return ShelfParse(emptyList(), ShelfStrategy.NONE)
+
+    val (items, strategy) = songItems(root)
     val seen = HashSet<String>()
     val songs = ArrayList<YouTubeSong>(items.size)
     for (item in items) {
       val song = runCatching { toSong(item, songs.size) }.getOrNull() ?: continue
       if (seen.add(song.videoId)) songs += song
     }
-    return songs
+    return ShelfParse(songs, if (songs.isEmpty()) ShelfStrategy.NONE else strategy)
   }
 
   /**
@@ -96,17 +123,20 @@ object InnerTubeParser {
    * document, which quietly re-admitted the rows this policy exists to exclude — Videos, Top
    * Results, podcast episodes — the moment the expected path returned nothing.
    */
-  private fun songItems(root: JsonElement): List<JsonElement> {
+  private fun songItems(root: JsonElement): Pair<List<JsonElement>, ShelfStrategy> {
     // The documented envelope is trusted more than a recovered one. Within it, a single
     // unrecognised shelf is accepted because the request pins hl=en and sends the Songs filter,
     // so that shelf is the songs shelf even if its title string drifts.
     val documented = itemsFromShelves(root)
-    if (documented.isNotEmpty()) return rowsFrom(documented, allowSingleUnknownShelf = true)
+    if (documented.isNotEmpty()) {
+      return rowsFrom(documented, allowSingleUnknownShelf = true) to ShelfStrategy.DOCUMENTED
+    }
 
     // The envelope itself moved, so we no longer know we are even looking at search results.
     // Require a literal "Songs" title here and fail closed otherwise — a lone unrecognised shelf
     // in an unknown document could be anything.
-    return rowsFrom(findShelves(root, 0), allowSingleUnknownShelf = false)
+    return rowsFrom(findShelves(root, 0), allowSingleUnknownShelf = false) to
+      ShelfStrategy.RECOVERED_ENVELOPE
   }
 
   private fun rowsFrom(shelves: List<JsonElement>, allowSingleUnknownShelf: Boolean): List<JsonElement> {

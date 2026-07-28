@@ -358,7 +358,6 @@ adb -s emulator-5554 shell "pm enable --user 0 com.google.android.apps.youtube.m
 > you will "launch" into an `ActivityNotFoundException`.
 
 ### `connectedAndroidTest` runs on *every* attached device
-
 A physical phone paired over adb will be included, and it **uninstalls both APKs when it
 finishes**, so a later `adb shell am start` fails with
 `Activity class {...} does not exist`. Reinstall after connected tests. Pinning works:
@@ -458,6 +457,57 @@ musicResponsiveListItemRenderer.badges[]
 ```
 
 Absent `badges` means "not stated", not "clean".
+
+### `spotify.link` short links are Branch links, and UA decides what you get
+
+`https://spotify.link/{code}` is not a plain redirect to a canonical URL. With an **Android Chrome**
+UA it answers `307` with an Android **intent URI**, captured verbatim:
+
+```
+Location: intent://open?link_click_id=…#Intent;scheme=spotify;package=com.spotify.music;
+          S.browser_fallback_url=market%3A%2F%2Fdetails%3Fid%3Dcom.spotify.music;B.branch_intent=true;end
+```
+
+`java.net.URL` cannot represent that, so blind redirect-following fails with an opaque
+`MalformedURLException`. Follow redirects **manually**, reject any non-http/https scheme, and pin a
+non-browser UA (`Spotitube/1.0 (+Android)`).
+
+> **Do not test this with an invented code.** An invalid code returns Branch's unknown-code landing
+> page — `200`, no redirect — which looks exactly like "this UA doesn't work" and will lead you to
+> false conclusions in both directions. A real code has to be minted from Spotify's share sheet.
+
+That `S.browser_fallback_url` matters for the failure path: if expansion fails and you hand the
+original Branch link to a browser while Spotify is **not** installed, the user lands on the Play
+Store being asked to install Spotify — the exact opposite of this app's purpose.
+
+### Diagnostic logging: `BuildConfig.DEBUG` is not available here
+
+`app/build.gradle.kts` sets `buildConfig = false` in `buildFeatures` (alongside `aidl` and
+`shaders`), so **`BuildConfig.DEBUG` does not resolve** and reaching for it gives a confusing
+unresolved-reference rather than an obvious cause. Either flip that flag or use
+`Log.isLoggable(TAG, Log.DEBUG)`, which needs no build change.
+
+Related principle, learned the hard way while trimming what the `Spotitube` tag emits:
+
+> **Removing the readable copy of data while leaving the resolvable copy is not a privacy fix.**
+> Dropping `spotify="Artist — Title"` from the MATCH line while keeping `videoId=` would have
+> destroyed the most useful diagnostic on the line and left listening history fully recoverable —
+> `videoId` is one lookup from the title. Log privacy on this line is a **build-type** decision
+> about the whole diagnostic block (`videoId` + `picked` + `spotify` + `score` + query together),
+> not a field-by-field one.
+
+Genuinely worth removing, by contrast: `e.message` from `ActivityNotFoundException` and
+`SecurityException`, because the message embeds the entire `Intent` **including the data URI** — a
+full-URL leak from inside a failure path, where nobody thinks to look.
+
+### vivo OriginOS silently throttles app logcat
+
+Mid-session on the vivo X300 Pro the app simply **stopped being able to write to logcat**. Share
+tests produced no output at all and looked completely dead; they had in fact been working the whole
+time. OriginOS applies its own log throttling with no warning.
+
+> On this device, **absence of logcat output is not evidence of failure.** Confirm against
+> `dumpsys media_session` or what is actually on screen before concluding anything is broken.
 
 ### Gradle notes
 

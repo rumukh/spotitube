@@ -8,6 +8,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.util.Log
 import androidx.core.net.toUri
+import com.example.spotitube.core.LaunchPlan
 
 /**
  * Turns a resolved URL into an actual app launch.
@@ -81,58 +82,41 @@ object LaunchIntents {
     candidateTargets(context, url, preferredPackage).firstOrNull() ?: Target.ChooserExcludingSelf
 
   fun open(context: Context, url: String, preferredPackage: String?, fallbackUri: String? = null): LaunchReport {
-    val uri = url.toUri()
+    // Ordering lives in core/LaunchPlan so it can be unit-tested without a device; this walks it.
+    val plan =
+      LaunchPlan.attempts(
+        url = url,
+        preferredPackage = preferredPackage,
+        fallbackUri = fallbackUri,
+        selfPackage = context.packageName,
+        canHandle = { uri, pkg -> canHandle(context, uri.toUri(), pkg) },
+        browserPackage = { browserPackage(context) },
+      )
 
-    // Layer 1: the preferred app on the canonical https URL. This forwards the user's original
-    // link unmodified, so it is the safest thing to try first.
-    if (preferredPackage != null && preferredPackage != context.packageName) {
-      if (canHandle(context, uri, preferredPackage) &&
-        start(context, viewIntent(uri).setPackage(preferredPackage))
-      ) {
-        return LaunchReport(true, url, preferredPackage, "preferred-app")
-      }
-
-      // Layer 2: a validated `spotify:` URI at the SAME package, before falling out to a browser.
-      //
-      // This has to come before the browser or it is unreachable: a browser start almost always
-      // succeeds, so ordering it later would skip precisely the two cases this exists for — a
-      // false negative from the pre-query above, and an https start that fails despite it.
-      //
-      // Not dead code: all six `spotify:{type}:{id}` routes are screenshot-verified against the
-      // real Spotify build, whereas "explicit setPackage + https still resolves after the user
-      // disables Spotify's supported-links toggle" rests on AOSP source and is unmeasured on a
-      // forked OEM framework. A custom scheme is not a web intent, so it sidesteps that entirely.
-      //
-      // It cannot re-enter us: we never register the `spotify:` scheme, and it is package-scoped.
-      if (fallbackUri != null && start(context, viewIntent(fallbackUri.toUri()).setPackage(preferredPackage))) {
-        return LaunchReport(true, fallbackUri, preferredPackage, "scheme-fallback")
+    for (attempt in plan) {
+      val intent =
+        if (attempt.isChooser) {
+          // EXTRA_EXCLUDE_COMPONENTS is honoured *only* by a chooser intent — on a plain
+          // ACTION_VIEW it does nothing. Exclude every component of ours that could claim the link
+          // so the user cannot pick Spotitube and re-enter this same code path.
+          Intent.createChooser(viewIntent(attempt.uri.toUri()), null).apply {
+            putExtra(
+              Intent.EXTRA_EXCLUDE_COMPONENTS,
+              arrayOf(
+                ComponentName(context, LinkHandlerActivity::class.java),
+                ComponentName(context, MainActivity::class.java),
+              ),
+            )
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+          }
+        } else {
+          viewIntent(attempt.uri.toUri()).setPackage(attempt.packageName)
+        }
+      if (start(context, intent)) {
+        return LaunchReport(true, attempt.uri, attempt.packageName, attempt.via)
       }
     }
-
-    // Layer 3: an explicitly resolved browser. Explicit so it is provably not us.
-    browserPackage(context)?.let { browser ->
-      if (start(context, viewIntent(uri).setPackage(browser))) {
-        return LaunchReport(true, url, browser, "browser-fallback")
-      }
-    }
-
-    // Layer 4: a chooser is the only option left; exclude every component of ours that could claim
-    // the link so the user cannot pick Spotitube and re-enter this same code path.
-    // EXTRA_EXCLUDE_COMPONENTS is honoured *only* by a chooser intent — on a plain ACTION_VIEW it
-    // does nothing.
-    val chooser =
-      Intent.createChooser(viewIntent(uri), null).apply {
-        putExtra(
-          Intent.EXTRA_EXCLUDE_COMPONENTS,
-          arrayOf(
-            ComponentName(context, LinkHandlerActivity::class.java),
-            ComponentName(context, MainActivity::class.java),
-          ),
-        )
-        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-      }
-    val started = start(context, chooser)
-    return LaunchReport(started, url, null, if (started) "chooser-excluding-self" else "no-handler")
+    return LaunchReport(false, url, null, "no-handler")
   }
 
   private fun viewIntent(uri: Uri): Intent =

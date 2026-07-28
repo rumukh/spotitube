@@ -1,5 +1,6 @@
 package com.example.spotitube.net
 
+import com.example.spotitube.core.MetadataSource
 import com.example.spotitube.core.SpotifyEmbedParser
 import com.example.spotitube.core.SpotifyEntityType
 import com.example.spotitube.core.SpotifyLink
@@ -72,11 +73,21 @@ class HttpSpotifyMetadataSource(
 
         // Prefer the structured payload, then fill the album (and anything missing) from the tags.
         val merged = embed?.mergedWith(openGraph) ?: openGraph
-        if (merged != null && merged.title.isNotBlank()) return@coroutineScope merged
+        if (merged != null && merged.title.isNotBlank()) {
+          val source =
+            when {
+              embed != null && openGraph != null -> MetadataSource.EMBED_AND_OPEN_GRAPH
+              embed != null -> MetadataSource.EMBED
+              else -> MetadataSource.OPEN_GRAPH
+            }
+          return@coroutineScope merged.copy(source = source)
+        }
 
         // Degraded last resort: oEmbed always answers but carries the title only, no artist and no
         // duration. MatchScorer refuses to auto-play on that, so this can only ever open search.
-        oEmbedTitle(link)?.let { SpotifyTrackMeta(title = it, artists = emptyList()) }
+        oEmbedTitle(link)?.let {
+          SpotifyTrackMeta(title = it, artists = emptyList(), source = MetadataSource.OEMBED_TITLE_ONLY)
+        }
       }
     }
 
@@ -143,7 +154,7 @@ class HttpSpotifyMetadataSource(
      * that measurement shows it never reaches canonical, delete it rather than keep a fallback that
      * only looks like redundancy.
      */
-    private val SHORT_LINK_USER_AGENTS = listOf(APP_USER_AGENT, "facebookexternalhit/1.1")
+    internal val SHORT_LINK_USER_AGENTS = listOf(APP_USER_AGENT, "facebookexternalhit/1.1")
 
     /**
      * A `spotify.link` short URL redirects wherever Spotify points it; refuse to follow it off

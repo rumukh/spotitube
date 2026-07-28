@@ -180,8 +180,10 @@ object MatchScorer {
   fun score(spotify: SpotifyTrackMeta, candidate: YouTubeSong): ScoredMatch {
     val titleScore = TextNormalizer.similarity(spotify.title, candidate.title)
     val artistScore = artistScore(spotify.artists, candidate.artists)
-    val albumKnown = spotify.album != null && candidate.album != null
-    val albumScore = if (albumKnown) TextNormalizer.similarity(spotify.album!!, candidate.album!!) else 0.0
+    val spotifyAlbum = spotify.album
+    val candidateAlbum = candidate.album
+    val albumKnown = spotifyAlbum != null && candidateAlbum != null
+    val albumScore = if (albumKnown) TextNormalizer.similarity(spotifyAlbum, candidateAlbum) else 0.0
 
     val spotifyDuration = spotify.durationSeconds
     val candidateDuration = candidate.durationSeconds

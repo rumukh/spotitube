@@ -141,7 +141,8 @@ class LinkHandlerActivity : ComponentActivity() {
             "picked=\"${outcome.description}\" spotify=\"${outcome.spotify.display}\" " +
             "spotifyDuration=${outcome.spotify.durationSeconds} " +
             "explicit=${outcome.spotify.isExplicit} playable=${outcome.spotify.isPlayable}" +
-            (outcome.spotify.playabilityReason?.let { " playabilityReason=$it" } ?: ""),
+            (outcome.spotify.playabilityReason?.let { " playabilityReason=$it" } ?: "") +
+            " metaSource=${outcome.spotify.source ?: "unknown"}",
         )
         status = "Opening ${outcome.description}"
         val report = LaunchIntents.open(this, outcome.url, LaunchIntents.YT_MUSIC_PACKAGE)
@@ -187,10 +188,32 @@ class LinkHandlerActivity : ComponentActivity() {
   private fun result(kind: String, report: LaunchIntents.LaunchReport, extra: String) {
     Log.i(TAG, "RESULT outcome=$kind $report $extra")
     if (!report.started) {
-      android.widget.Toast.makeText(this, "Spotitube: nothing could open that link", android.widget.Toast.LENGTH_LONG)
+      // Nothing on the device would take the link — not the target app, not a browser, not even a
+      // chooser. A bare "it failed" toast leaves the user with no way forward, so hand them the
+      // resolved URL on the clipboard: they can paste it wherever they like. This is the same
+      // clipboard route the main screen documents, so it is a path they may already know.
+      val copied = copyToClipboard(report.uri)
+      android.widget.Toast.makeText(
+          this,
+          if (copied) {
+            "Spotitube: nothing could open that link — it is on your clipboard"
+          } else {
+            "Spotitube: nothing could open that link"
+          },
+          android.widget.Toast.LENGTH_LONG,
+        )
         .show()
     }
   }
+
+  /** Puts [url] on the clipboard. Returns false if the system refused, so the toast can stay honest. */
+  private fun copyToClipboard(url: String): Boolean =
+    runCatching {
+        val clipboard = getSystemService(android.content.ClipboardManager::class.java) ?: return false
+        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Spotitube link", url))
+        true
+      }
+      .getOrDefault(false)
 
   companion object {
     /** Fixed logcat tag — the emulator verification greps for `RESULT outcome=`. */

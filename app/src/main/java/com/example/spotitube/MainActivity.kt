@@ -43,12 +43,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.spotitube.core.LinkHandling
 import com.example.spotitube.core.ResolveOutcome
 import com.example.spotitube.core.SpotifyLinkParser
@@ -70,6 +70,12 @@ class MainActivity : ComponentActivity() {
 
 private const val SELF_TEST_TRACK = "https://open.spotify.com/track/4PTG3Z6ehGkBFwjybzWkR8"
 
+/**
+ * The host every real shared Spotify link uses. `play.spotify.com` is also declared in the manifest
+ * for legacy links, but selecting it alone tells us nothing about whether ordinary links reach us.
+ */
+private const val PRIMARY_LINK_HOST = "open.spotify.com"
+
 @Composable
 private fun HomeScreen() {
   val context = LocalContext.current
@@ -79,25 +85,36 @@ private fun HomeScreen() {
   var selfTestOutput by remember { mutableStateOf<String?>(null) }
   var running by remember { mutableStateOf(false) }
 
-  val linkHandlingEnabled = remember { linkHandlingEnabled(context) }
-  val ytMusicInstalled = remember { LaunchIntents.isInstalled(context, LaunchIntents.YT_MUSIC_PACKAGE) }
-  val spotifyInstalled = remember { LaunchIntents.isInstalled(context, LaunchIntents.SPOTIFY_PACKAGE) }
-  val linkHandling =
-    remember(linkHandlingEnabled, spotifyInstalled) { LinkHandling.of(linkHandlingEnabled, spotifyInstalled) }
+  // Everything below can change while the user is away in Settings or the Play Store. The settings
+  // handoff is the headline flow, so showing stale instructions the moment the user returns from
+  // completing it would be the worst possible time to be wrong — refresh it all on resume.
+  var linkHandlingAllowed by remember { mutableStateOf(linkHandlingEnabled(context)) }
+  var spotifyInstalled by
+    remember { mutableStateOf(LaunchIntents.isInstalled(context, LaunchIntents.SPOTIFY_PACKAGE)) }
+  var ytMusicInstalled by
+    remember { mutableStateOf(LaunchIntents.isInstalled(context, LaunchIntents.YT_MUSIC_PACKAGE)) }
 
-  // Zero-setup path: if the clipboard already holds a Spotify link, offer to open it in one tap.
-  // Read only while genuinely foregrounded and only when it parses as a Spotify link; never logged,
-  // never persisted, and never launched without the user tapping — an unprompted launch would be
-  // both spooky and, on Android 12+, accompanied by a baffling "pasted from your clipboard" toast.
+  // Zero-setup path, and the only one that works in Signal or Telegram: if the clipboard already
+  // holds a Spotify link, offer to open it in one tap. Read only while genuinely foregrounded and
+  // only when it parses as a Spotify link; never logged, never persisted, and never launched
+  // without the user tapping — an unprompted launch would be both spooky and, on Android 12+,
+  // accompanied by a baffling "pasted from your clipboard" toast.
   var clipboardLink by remember { mutableStateOf<String?>(null) }
   val lifecycleOwner = LocalLifecycleOwner.current
   DisposableEffect(lifecycleOwner) {
     val observer = LifecycleEventObserver { _, event ->
-      if (event == Lifecycle.Event.ON_RESUME) clipboardLink = spotifyLinkInClipboard(context)
+      if (event == Lifecycle.Event.ON_RESUME) {
+        clipboardLink = spotifyLinkInClipboard(context)
+        linkHandlingAllowed = linkHandlingEnabled(context)
+        spotifyInstalled = LaunchIntents.isInstalled(context, LaunchIntents.SPOTIFY_PACKAGE)
+        ytMusicInstalled = LaunchIntents.isInstalled(context, LaunchIntents.YT_MUSIC_PACKAGE)
+      }
     }
     lifecycleOwner.lifecycle.addObserver(observer)
     onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
   }
+
+  val linkHandling = LinkHandling.of(linkHandlingAllowed, spotifyInstalled)
 
   Column(
     modifier = Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState()).padding(20.dp),
@@ -115,7 +132,7 @@ private fun HomeScreen() {
       if (parsedClip != null) {
         Card(modifier = Modifier.fillMaxWidth()) {
           Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Link on your clipboard", style = MaterialTheme.typography.titleMedium)
+            Text("Ready to open", style = MaterialTheme.typography.titleMedium)
             Text(
               "You copied a Spotify ${LinkHandlerActivity.describe(parsedClip.type).lowercase()} link.",
               style = MaterialTheme.typography.bodySmall,
@@ -132,6 +149,10 @@ private fun HomeScreen() {
             ) {
               Text(if (parsedClip.isTrack) "Open in YouTube Music" else "Open in Spotify")
             }
+            Text(
+              "This works any time: copy a link, open Spotitube, tap once. No setup needed.",
+              style = MaterialTheme.typography.bodySmall,
+            )
           }
         }
       }
@@ -139,34 +160,37 @@ private fun HomeScreen() {
 
     Card(modifier = Modifier.fillMaxWidth()) {
       Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Opening links automatically", style = MaterialTheme.typography.titleMedium)
+        Text("Make tapping links work", style = MaterialTheme.typography.titleMedium)
         when (linkHandling) {
           LinkHandling.NOT_REPORTABLE ->
             Text(
               "On this Android version, tapping a Spotify link should offer Spotitube in the " +
-                "\"Open with\" list. Where it does not, sharing the link to Spotitube needs no setup.",
+                "\"Open with\" list. If it does not, use the copy method below.",
               style = MaterialTheme.typography.bodySmall,
             )
           LinkHandling.ENABLED ->
             Text(
-              "Enabled. Tapping a Spotify link opens Spotitube directly.",
+              "Set up. Tapping a Spotify link in any app opens Spotitube directly.",
               style = MaterialTheme.typography.bodySmall,
             )
           LinkHandling.BLOCKED_BY_SPOTIFY ->
             Text(
-              "Spotify owns spotify.com, so Android has verified those links to the Spotify app " +
-                "and only one app can hold them. To let Spotitube take them you have to hand them " +
-                "over in two steps:\n\n" +
+              "This is the one setup worth doing: once it is done, tapping a Spotify link " +
+                "anywhere just works.\n\n" +
+                "Spotify owns spotify.com, so Android has given those links to the Spotify app, " +
+                "and only one app can hold them. Handing them over takes two steps:\n\n" +
                 "1. In Spotify's settings, turn OFF \"Open supported links\".\n" +
-                "2. Come back to Spotitube's settings and turn ON \"Open supported links\", then " +
-                "tick the spotify.com addresses.\n\n" +
-                "If you would rather leave Spotify as it is, just share links to Spotitube instead " +
-                "— that needs no setup and changes nothing.",
+                "2. Back in Spotitube's settings, turn ON \"Open supported links\" and tick the " +
+                "spotify.com addresses.\n\n" +
+                "If you would rather not change Spotify's settings, the copy method below works " +
+                "with no setup at all.",
               style = MaterialTheme.typography.bodySmall,
             )
           LinkHandling.AVAILABLE ->
             Text(
-              "Android 12 and newer only open web links in an app automatically if that app owns " +
+              "This is the one setup worth doing: once it is done, tapping a Spotify link " +
+                "anywhere just works.\n\n" +
+                "Android 12 and newer only open web links in an app automatically if that app owns " +
                 "the website, and we do not own spotify.com. Tap below, turn on " +
                 "\"Open supported links\", and tick the Spotify addresses.",
               style = MaterialTheme.typography.bodySmall,
@@ -180,12 +204,20 @@ private fun HomeScreen() {
           Button(onClick = { openLinkSettings(context, context.packageName) }) {
             Text("2. Spotitube's link settings")
           }
-        } else {
+        } else if (linkHandling != LinkHandling.ENABLED) {
           Button(onClick = { openLinkSettings(context, context.packageName) }) { Text("Open link settings") }
         }
+      }
+    }
 
+    Card(modifier = Modifier.fillMaxWidth()) {
+      Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("No setup? Copy the link", style = MaterialTheme.typography.titleMedium)
         Text(
-          "Either way, sharing needs no setup: in any chat, use Share \u2192 Spotitube.",
+          "Long-press the link in your chat, choose Copy, then open Spotitube — the link appears " +
+            "at the top, ready to play in one tap.\n\n" +
+            "Some apps, including Signal and Telegram, only offer Copy on a link. Where an app " +
+            "does offer Share, Share \u2192 Spotitube works too.",
           style = MaterialTheme.typography.bodySmall,
         )
       }
@@ -323,9 +355,20 @@ private fun linkHandlingEnabledS(context: Context): Boolean {
   // The per-domain selection can read as SELECTED while the app-wide "Open supported links" toggle
   // is off, so both have to be true before we can claim link taps will reach us.
   if (!state.isLinkHandlingAllowed) return false
-  return state.hostToStateMap.values.any {
-    it == DomainVerificationUserState.DOMAIN_STATE_SELECTED ||
-      it == DomainVerificationUserState.DOMAIN_STATE_VERIFIED
+  // Check the host that actually matters, not `values.any`. Every real shared link is
+  // open.spotify.com, so a user who ticked only the legacy play.spotify.com would otherwise be told
+  // setup was complete while every link they receive still went to the browser.
+  //
+  // In practice only DOMAIN_STATE_SELECTED is reachable for us — autoVerify="false" and we do not
+  // own spotify.com, so we can never be VERIFIED — but VERIFIED genuinely would mean taps reach us,
+  // so it is accepted rather than asserting a policy fact that could change.
+  //
+  // Matched case-insensitively: an exact-key lookup would silently return null if the map key ever
+  // differed in case from the manifest literal.
+  return state.hostToStateMap.any { (host, domainState) ->
+    host.equals(PRIMARY_LINK_HOST, ignoreCase = true) &&
+      (domainState == DomainVerificationUserState.DOMAIN_STATE_SELECTED ||
+        domainState == DomainVerificationUserState.DOMAIN_STATE_VERIFIED)
   }
 }
 
