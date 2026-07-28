@@ -130,8 +130,18 @@ class HttpSpotifyMetadataSource(
     private const val SHORT_LINK_MAX_HOPS = 4
 
     /**
-     * Agents tried in order when expanding a short link. Deliberately excludes browser UAs, which
-     * make Branch answer with an `intent://` redirect we cannot follow.
+     * Agents tried in order when expanding a short link.
+     *
+     * Browser UAs are excluded deliberately: they make Branch answer with an `intent://` redirect
+     * we cannot follow. [APP_USER_AGENT] is the one observed to walk through to a canonical
+     * address.
+     *
+     * UNVERIFIED: `facebookexternalhit/1.1` is a second attempt rather than a proven fallback.
+     * Branch is known to serve unfurl bots a preview/landing page, which would make it decorative —
+     * it would return 200 with no redirect and contribute nothing. It costs one extra request only
+     * on a path that has already failed, so it stays until measured against a real short code; if
+     * that measurement shows it never reaches canonical, delete it rather than keep a fallback that
+     * only looks like redundancy.
      */
     private val SHORT_LINK_USER_AGENTS = listOf(APP_USER_AGENT, "facebookexternalhit/1.1")
 

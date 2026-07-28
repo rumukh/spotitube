@@ -34,7 +34,8 @@ object LaunchIntents {
   private const val ANDROID_RESOLVER_PACKAGE = "android"
 
   /**
-   * What actually happened, for logging and for the on-screen message.
+   * Whether the system accepted the intent, plus where it went — for logging and the on-screen
+   * message.
    *
    * `started` means only that the system ACCEPTED the intent — that `startActivity` did not throw.
    * It is not evidence that the target rendered anything, let alone played audio.

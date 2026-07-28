@@ -53,7 +53,11 @@ class LiveNetworkTest {
   }
 
   @Test
-  fun trackResolvesEndToEndOverLiveNetwork() = runBlocking {
+  fun trackResolvesToCorrectVideoIdOverLiveNetwork() = runBlocking {
+    // Deliberately NOT named "end to end": this stops at the resolver. It never constructs or
+    // dispatches an intent, and proves nothing about playback — see the evidence table in
+    // AGENTS.md. What it does prove is that the live Spotify and InnerTube contracts still parse
+    // and still pick the right recording.
     val outcome = SpotitubeResolver(spotify, youTube).resolve(rickAstley)
     val play = outcome as? ResolveOutcome.PlayOnYouTubeMusic ?: error("expected a play outcome, got $outcome")
     assertEquals("lYBUbBu4W08", play.videoId)
