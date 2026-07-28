@@ -77,7 +77,9 @@ internal object Http {
         connection.disconnect()
       }
     }
-    return current
+    // Exhausted the budget while still being redirected. Returning `current` here would look
+    // indistinguishable from "arrived", so say so instead and let the caller fall back.
+    throw IOException("Still redirecting after $maxRedirects hops")
   }
 
   /**

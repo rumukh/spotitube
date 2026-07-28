@@ -144,7 +144,7 @@ private fun HomeScreen() {
           LinkHandling.NOT_REPORTABLE ->
             Text(
               "On this Android version, tapping a Spotify link should offer Spotitube in the " +
-                "\"Open with\" list. Where it does not, sharing the link to Spotitube always works.",
+                "\"Open with\" list. Where it does not, sharing the link to Spotitube needs no setup.",
               style = MaterialTheme.typography.bodySmall,
             )
           LinkHandling.ENABLED ->
@@ -161,7 +161,7 @@ private fun HomeScreen() {
                 "2. Come back to Spotitube's settings and turn ON \"Open supported links\", then " +
                 "tick the spotify.com addresses.\n\n" +
                 "If you would rather leave Spotify as it is, just share links to Spotitube instead " +
-                "— that always works and changes nothing.",
+                "— that needs no setup and changes nothing.",
               style = MaterialTheme.typography.bodySmall,
             )
           LinkHandling.AVAILABLE ->
@@ -185,7 +185,7 @@ private fun HomeScreen() {
         }
 
         Text(
-          "Either way, sharing always works: in any chat, use Share \u2192 Spotitube.",
+          "Either way, sharing needs no setup: in any chat, use Share \u2192 Spotitube.",
           style = MaterialTheme.typography.bodySmall,
         )
       }

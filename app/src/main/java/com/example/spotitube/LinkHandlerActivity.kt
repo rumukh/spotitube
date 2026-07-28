@@ -39,7 +39,9 @@ import kotlinx.coroutines.launch
  * a Spotify link shows a brief spinner and then YouTube Music opens playing the song.
  *
  * Accepts both `ACTION_VIEW` (a real link tap, which on Android 12+ only reaches us once the user
- * enables "Open supported links") and `ACTION_SEND` of `text/plain`, which always works.
+ * enables "Open supported links") and `ACTION_SEND` of `text/plain`. The SEND filter is not a
+ * web intent, so Android's domain verification cannot take it away from us — which is why it is
+ * the path onboarding leads with.
  */
 class LinkHandlerActivity : ComponentActivity() {
 
@@ -141,7 +143,8 @@ class LinkHandlerActivity : ComponentActivity() {
         Log.i(TAG, "NO CONFIDENT MATCH reason=${outcome.reason}")
         status = "No confident match — opening search"
         val report = LaunchIntents.open(this, outcome.url, LaunchIntents.YT_MUSIC_PACKAGE)
-        result("SEARCH", report, extra = "query=\"${outcome.query}\" reason=\"${outcome.reason}\"")
+        // The query is the artist and title the user is looking up; keep it out of logcat.
+        result("SEARCH", report, extra = "reason=\"${outcome.reason}\"")
       }
       is ResolveOutcome.BounceToSpotify -> {
         // An unexpanded short link is the one case where the browser fallback actively harms the

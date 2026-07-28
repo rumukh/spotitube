@@ -301,7 +301,10 @@ RESULT outcome=PLAY started=true target=com.google.android.apps.youtube.music
 `outcome` is `PLAY` | `SEARCH` | `BOUNCE` | `LOOPGUARD` | `UNSUPPORTED`; `via` is
 `preferred-app` | `browser-fallback` | `chooser-excluding-self` | `no-handler`.
 
-The share path works too, and is the one that always works on Android 12+:
+The share path is the one that is unaffected by Android 12+ link verification, because
+`ACTION_SEND` is not a web intent and no other app can claim it away from us. (The code path
+is exercised on the emulator; end-to-end share-sheet behaviour on a physical device is listed
+as unmeasured in the evidence table above until the device session reports.)
 
 ```powershell
 adb -s emulator-5554 shell "am start -a android.intent.action.SEND -t text/plain `

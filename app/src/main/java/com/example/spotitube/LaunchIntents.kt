@@ -33,9 +33,18 @@ object LaunchIntents {
 
   private const val ANDROID_RESOLVER_PACKAGE = "android"
 
-  /** What actually happened, for logging and for the on-screen message. */
+  /**
+   * What actually happened, for logging and for the on-screen message.
+   *
+   * `started` means only that the system ACCEPTED the intent — that `startActivity` did not throw.
+   * It is not evidence that the target rendered anything, let alone played audio.
+   *
+   * [toString] deliberately omits [uri]: these lines go to logcat on the owner's personal phone,
+   * and the URI carries what they are listening to. The videoId and outcome are logged separately
+   * and are enough to debug with.
+   */
   data class LaunchReport(val started: Boolean, val uri: String, val targetPackage: String?, val via: String) {
-    override fun toString(): String = "started=$started target=${targetPackage ?: "-"} via=$via uri=$uri"
+    override fun toString(): String = "started=$started target=${targetPackage ?: "-"} via=$via"
   }
 
   /** Where a launch would go. Computed separately from [open] so it can be asserted on in tests. */
@@ -143,10 +152,12 @@ object LaunchIntents {
       context.startActivity(intent)
       true
     } catch (e: ActivityNotFoundException) {
-      Log.w(LinkHandlerActivity.TAG, "No activity for ${intent.`package` ?: "chooser"}: ${e.message}")
+      // Log the exception CLASS, not its message: the message embeds the full Intent, data URI
+      // included, which would put the listening history back into logcat by the side door.
+      Log.w(LinkHandlerActivity.TAG, "No activity for ${intent.`package` ?: "chooser"} (${e.javaClass.simpleName})")
       false
     } catch (e: SecurityException) {
-      Log.w(LinkHandlerActivity.TAG, "Not permitted to start ${intent.`package`}: ${e.message}")
+      Log.w(LinkHandlerActivity.TAG, "Not permitted to start ${intent.`package`} (${e.javaClass.simpleName})")
       false
     }
 }
