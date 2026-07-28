@@ -105,6 +105,57 @@ class MatchScorerTest {
     assertTrue(match.score >= MatchScorer.CONFIDENCE_THRESHOLD)
   }
 
+  @Test
+  fun `a mismatched album does not reject a match whose title is merely close`() {
+    // Regression. The test above asserts the right property but only at the one point where it
+    // cannot fail: a *perfect* title, where a flat -0.25 still lands exactly on 0.75. Give the title
+    // the ordinary stylistic drift real YouTube uploads carry and the old arithmetic rejected it.
+    //   title similarity 0.800, artist 1.000, album 0.000
+    //   old: 0.40*0.800 + 0.35*1.000 + 0.25*0.000 = 0.670  -> under 0.70, SEARCH
+    //   new: (0.40*0.800 + 0.35*1.000) / 0.75     = 0.893  -> plays
+    // Nothing is wrong with this candidate except that the upload names a different release. This is
+    // the shape that sent three real Japanese tracks to search.
+    val reissue =
+      song(
+        title = "Never Gonna Give U Up",
+        artists = listOf("Rick Astley"),
+        duration = 214,
+        album = "Greatest Hits of the 80s",
+      )
+    val match = MatchScorer.score(rickAstley, reissue)
+    assertFalse(match.explain(), match.vetoed)
+    assertEquals("fixture drift: this test needs an imperfect title", 0.800, match.titleScore, 0.005)
+    assertTrue(
+      "a disagreeing album must not gate; got ${match.explain()}",
+      match.core >= MatchScorer.CONFIDENCE_THRESHOLD,
+    )
+    // And it must be recorded as uninformative rather than silently absorbed.
+    assertTrue(match.explain(), match.notes.contains("album-uninformative"))
+  }
+
+  @Test
+  fun `an agreeing album still raises the score above ignoring it`() {
+    // The other half of "corroborate but never contradict": album must still be able to *help*, or
+    // the term would be dead weight and the Sunflower case would have nothing to work with.
+    //   agreeing:    0.40*0.800 + 0.35 + 0.25*1.000 = 0.920
+    //   disagreeing: (0.40*0.800 + 0.35) / 0.75     = 0.893
+    val onRightAlbum =
+      song(
+        title = "Never Gonna Give U Up",
+        artists = listOf("Rick Astley"),
+        duration = 214,
+        album = "Whenever You Need Somebody",
+      )
+    val agreeing = MatchScorer.score(rickAstley, onRightAlbum)
+    val disagreeing = MatchScorer.score(rickAstley, onRightAlbum.copy(album = "Greatest Hits of the 80s"))
+    assertTrue(
+      "agreeing=${agreeing.explain()} disagreeing=${disagreeing.explain()}",
+      agreeing.core > disagreeing.core,
+    )
+    assertTrue(agreeing.explain(), agreeing.notes.contains("album-match"))
+    assertFalse(agreeing.explain(), agreeing.notes.contains("album-uninformative"))
+  }
+
   // --- explicit / clean -----------------------------------------------------------------------
 
   @Test

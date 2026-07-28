@@ -3,6 +3,7 @@ package com.example.spotitube.core
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -161,6 +162,44 @@ class ResolverTest {
     val outcome = SpotitubeResolver(rickSpotify(), youTube).resolve(rickUrl)
     val search = outcome as ResolveOutcome.SearchOnYouTubeMusic
     assertTrue(search.reason, search.reason.contains("vetoed"))
+  }
+
+  @Test
+  fun `a search explains which candidate lost and on which sub-score`() = runTest {
+    // The defect this closes is a reporting one. A device report could say "best 0.55" but not that
+    // the album term was the entire cause, so the reader had to re-derive it from the weights by
+    // hand. A bare score cannot tell "we found the wrong song" from "we found the right song and
+    // YouTube named the album differently", and those need opposite fixes.
+    val covers =
+      listOf(
+        YouTubeSong("aaa", "Never Gonna Give You Up", listOf("Midnight Arena"), null, 263),
+        YouTubeSong("bbb", "Never Gonna Give You Up (Karaoke Version)", listOf("Urock Karaoke"), null, 214),
+      )
+    val youTube =
+      object : YouTubeMusicSearch {
+        override suspend fun searchSongs(query: String) = covers
+      }
+    val search =
+      SpotitubeResolver(rickSpotify(), youTube).resolve(rickUrl) as ResolveOutcome.SearchOnYouTubeMusic
+    val diagnostic = search.diagnostic ?: error("a losing candidate must be reported")
+
+    // Which candidate lost...
+    assertTrue(diagnostic, diagnostic.contains("best="))
+    // ...on which sub-score — the part that makes the line diagnostic rather than merely negative...
+    for (subScore in listOf("t=", "a=", "al=")) {
+      assertTrue("missing $subScore in: $diagnostic", diagnostic.contains(subScore))
+    }
+    // ...and the bar it had to clear, so the reader need not know the constant.
+    assertTrue(diagnostic, diagnostic.contains("threshold=0.70"))
+    assertTrue("the veto is the cause here: $diagnostic", diagnostic.contains("VETO["))
+  }
+
+  @Test
+  fun `a search with nothing ranked reports no diagnostic rather than inventing one`() = runTest {
+    val search =
+      SpotitubeResolver(rickSpotify(), FakeYouTube(json = "{}")).resolve(rickUrl)
+        as ResolveOutcome.SearchOnYouTubeMusic
+    assertNull("nothing ranked, so there is nothing to explain", search.diagnostic)
   }
 
   @Test

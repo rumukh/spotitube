@@ -277,8 +277,9 @@ Keep this honest; several claims here were overclaimed at some point and had to 
 | YT Music **starts playing** from `music.youtube.com/watch?v=` + `setPackage` | **Measured** on a real vivo X300 Pro (YT Music 9.29.54): `dumpsys media_session` showed `state=PLAYING(3)`, correct metadata, and position advancing 898 ms → 26966 ms. A loaded-but-idle screen cannot advance position. |
 | `spotify:{type}:{id}` routes correctly for all 6 forwarded types | **Measured**, screenshot-verified against real Spotify 9.1.68.1888. |
 | Tapping a link, sharing, clipboard, and non-track bounce into the real Spotify app | **Measured** on hardware. Includes the classical case — Rachmaninov, where the "artist" is both composer and performer and titles are long and inconsistently formatted — matched correctly and the chosen video independently confirmed to be that recording. |
-| Low-confidence SEARCH fallback on device | **Not measured.** No track has been found that scores below threshold on real data, so the branch has never been forced on hardware. |
-| A genuinely non-Latin **title** on device | **Not measured.** A Korean *artist* has been tested; the romanisation fix is covered by unit tests against real captured InnerTube responses, but not yet end-to-end on the phone. |
+| Low-confidence SEARCH fallback on device | **Measured.** Three Japanese tracks scored 0.51–0.55 on hardware and all opened search. Crucially YT Music's MediaSession did **not** change across all three runs — it still held the previous track — so SEARCH opens the search page and autoplays nothing. That branch is proven safe rather than assumed. The *cause* of those low scores has since been fixed; see the album row below. |
+| A genuinely non-Latin **title** on device | **Measured, and it found a real defect.** ブルーアンバー, 高嶺の花子さん and 青と夏 all fell to SEARCH at 0.51–0.55. See the album row below — the title romanisation fix was working; the album term was sinking them. |
+| **Album disagreement is not evidence** | **Measured on four real tracks, and the scorer was changed because of it.** With real merged metadata, album scored 0.00 for **three of four correct matches**: ラブストーリー vs "Love Story" and ブルーアンバー vs "Blue Amber" (same album, two scripts), and Attitude vs "Ao To Natsu" (YouTube naming the single, Spotify the parent album). As a flat −0.25 that dropped correct matches to 0.750, and anything short of a perfect title below the 0.70 threshold. Album now *corroborates but never contradicts* — full weight when it agrees at least as strongly as title and artist already do, renormalised away otherwise, and still a full ordering signal in `rank`. All four tracks now score **1.000**. Nothing was lost: album never rejected a wrong recording in that measurement — covers go to the artist veto, live/remix/instrumental to the variant veto, re-records to the duration veto. |
 | Spotify declares an https VIEW filter for `open.spotify.com` | **Measured** via `dumpsys package com.spotify.music`. |
 | Explicit `setPackage` + https bypasses domain-verification filtering | **Measured** on real vivo OriginOS hardware at API 36: with `pm get-app-links com.spotify.music` reporting *Verification link handling allowed: false*, an explicit `setPackage` + canonical HTTPS intent still reached Spotify. Previously AOSP-source-only; this was the last big unmeasured claim. |
 | Share-sheet path end-to-end, album bounce into the real Spotify app | **Measured** on hardware — external `ACTION_SEND` resolves and plays, confirmed twice via MediaSession, including with the link embedded in surrounding prose. Note the caveat above: this is reachability-limited, not reliability-limited. |
@@ -473,6 +474,14 @@ releaseDate    { isoString: "1987-11-12T00:00:00Z" }
 `/track/{id}` page (`Artist · Album · Song · Year`), and the album is what disambiguates two
 YouTube uploads of the same recording on different releases. So Spotitube fetches **both
 concurrently and merges** — embed for the structured fields, Open Graph for the album.
+
+> **Trap: a fixture built from the embed alone tests a different code path than the app runs.**
+> The embed carries no album, so `MatchScorer` takes its album-*absent* branch, which renormalises
+> the album weight away and is therefore systematically more forgiving than a device. Four Japanese
+> tests were green this way while the phone fell to SEARCH on the same tracks. Anything asserting a
+> match outcome must merge the canonical page in, exactly as the app does — see
+> `JapaneseTrackMatchingTest.merged()`. Capturing only the endpoint that is convenient to parse is
+> the same class of error as authoring both sides of a fixture by hand.
 
 The canonical page is also UA- and CDN-variable: a **desktop Chrome** UA has been observed
 returning a ~6 KB JavaScript shell with no `og:`/`music:` tags at all, while

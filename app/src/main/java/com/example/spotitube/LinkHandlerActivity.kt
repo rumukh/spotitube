@@ -195,11 +195,19 @@ class LinkHandlerActivity : ComponentActivity() {
         )
       }
       is ResolveOutcome.SearchOnYouTubeMusic -> {
-        Log.i(TAG, "NO CONFIDENT MATCH reason=${outcome.reason}")
+        Log.i(TAG, "NO CONFIDENT MATCH reason=${outcome.reason}${outcome.diagnostic?.let { " $it" } ?: ""}")
         status = "No confident match — opening search"
         val report = LaunchIntents.open(this, outcome.url, LaunchIntents.YT_MUSIC_PACKAGE)
-        // The query is the artist and title the user is looking up; keep it out of logcat.
-        result("SEARCH", report, extra = "strategy=${YouTubeMusic.SEARCH_STRATEGY} reason=\"${outcome.reason}\"")
+        // The query is the artist and title the user is looking up; keep it out of logcat. The
+        // diagnostic names the *losing candidate* instead — YouTube-side metadata plus our own
+        // arithmetic, the same class of disclosure as `picked=` on the MATCH line above.
+        result(
+          "SEARCH",
+          report,
+          extra =
+            "strategy=${YouTubeMusic.SEARCH_STRATEGY} reason=\"${outcome.reason}\"" +
+              (outcome.diagnostic?.let { " $it" } ?: ""),
+        )
       }
       is ResolveOutcome.BounceToSpotify -> {
         // An unexpanded short link is the one case where the browser fallback actively harms the

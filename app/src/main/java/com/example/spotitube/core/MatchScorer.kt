@@ -202,20 +202,43 @@ object MatchScorer {
 
     // Evidence only. Duration contributes nothing here — see MAX_DURATION_DELTA_SECONDS.
     //
-    // When either side has no album, album is not evidence *against* the candidate: the weight is
-    // renormalised across title and artist instead. Otherwise Spotify's page degrading to a shell
-    // would cap every candidate at 0.75 and silently push good matches under the threshold.
+    // **Album can corroborate but never contradict.** Album is included at full weight only when it
+    // agrees at least as strongly as title and artist already do; otherwise its weight is
+    // renormalised away exactly as if the album were unknown. Written as a `max` of those two
+    // readings, which needs no cutoff constant: the crossover falls out as `albumScore >= n`, where
+    // `n` is the title/artist score normalised to 0..1.
+    //
+    // Why album may not gate. Measured on four real Japanese tracks: album scored 0.00 for three of
+    // the four *correct* matches — ラブストーリー vs "Love Story" (same album, two scripts),
+    // ブルーアンバー vs "Blue Amber" (likewise), and Attitude vs "Ao To Natsu" (YouTube naming the
+    // single, Spotify the parent album). None is a real disagreement; all three are metadata noise,
+    // and as a flat -0.25 they dropped correct matches to 0.55-0.51 and opened search instead.
+    //
+    // Nothing is lost by this, because album was never what rejected a wrong recording: a cover is
+    // caught by the artist veto, a live/remix/instrumental by the variant veto, and a re-record by
+    // the duration veto. In the same measurement every wrong candidate was rejected by title,
+    // duration or variant — album contributed to no rejection at all. What album is genuinely good
+    // at is choosing *between* two candidates that both look right, and that is ordering, not
+    // gating, so it keeps full strength in `rank` below.
+    val titleArtistEvidence = WEIGHT_TITLE * titleScore + WEIGHT_ARTIST * artistScore
+    val withoutAlbum = titleArtistEvidence / (WEIGHT_TITLE + WEIGHT_ARTIST)
     val core =
-      if (albumKnown) {
-        WEIGHT_TITLE * titleScore + WEIGHT_ARTIST * artistScore + WEIGHT_ALBUM * albumScore
-      } else {
-        (WEIGHT_TITLE * titleScore + WEIGHT_ARTIST * artistScore) / (WEIGHT_TITLE + WEIGHT_ARTIST)
-      }
+      if (albumKnown) maxOf(titleArtistEvidence + WEIGHT_ALBUM * albumScore, withoutAlbum)
+      else withoutAlbum
     if (albumKnown && albumScore > 0.8) notes += "album-match"
+    if (albumKnown && albumScore < withoutAlbum) notes += "album-uninformative"
 
     // Ordering only, from here down. Nothing below may affect `core`, and therefore nothing below
     // can push a weak match over the confidence threshold.
     var rank = core
+    // Album at full strength, which is the job it is actually good at. `core` above deliberately
+    // refuses to let a disagreeing album *reject* a candidate; here it is free to decide which of
+    // two plausible candidates wins, because losing a rank comparison only changes which recording
+    // plays, never whether one does. This is what picks Sunflower's soundtrack upload over the
+    // Hollywood's Bleeding upload whose duration matches more exactly.
+    if (albumKnown) {
+      rank += WEIGHT_ALBUM * albumScore
+    }
     if (candidate.hasAlbumLink) {
       rank += 0.02
       notes += "album-link"

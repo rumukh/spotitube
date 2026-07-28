@@ -14,8 +14,20 @@ sealed interface ResolveOutcome {
     val spotify: SpotifyTrackMeta,
   ) : ResolveOutcome
 
-  /** No confident match — hand the user YouTube Music's search results instead of guessing. */
-  data class SearchOnYouTubeMusic(val query: String, val url: String, val reason: String) : ResolveOutcome
+  /**
+   * No candidate was confidently the same recording, so open search instead of guessing.
+   *
+   * [diagnostic] carries the losing candidate and its sub-scores. Without it a SEARCH line says only
+   * *that* we scored below threshold, never *why* — a real report read "best 0.55" and the album
+   * term being the entire cause had to be derived by hand from the weights. It is the same class of
+   * disclosure as the `picked=`/`spotify=` fields already on the MATCH line.
+   */
+  data class SearchOnYouTubeMusic(
+    val query: String,
+    val url: String,
+    val reason: String,
+    val diagnostic: String? = null,
+  ) : ResolveOutcome
 
   /** Albums, playlists, artists, shows and episodes go back where they came from. */
   data class BounceToSpotify(val url: String, val type: SpotifyEntityType, val schemeUri: String? = null) :
@@ -107,7 +119,7 @@ class SpotitubeResolver(
           watchUrl == null -> "malformed videoId"
           else -> "best score %.2f below threshold %.2f".format(best.core, MatchScorer.CONFIDENCE_THRESHOLD)
         }
-      return ResolveOutcome.SearchOnYouTubeMusic(query, searchUrl, why)
+      return ResolveOutcome.SearchOnYouTubeMusic(query, searchUrl, why, diagnostic = best?.let(::diagnose))
     }
 
     return ResolveOutcome.PlayOnYouTubeMusic(
@@ -121,5 +133,16 @@ class SpotitubeResolver(
 
   companion object {
     fun youTubeMusicSearchUrl(query: String): String = YouTubeMusic.searchUrl(query)
+
+    /**
+     * Why the best candidate lost, in one line: the candidate, the sub-scores, the threshold it had
+     * to clear, and any veto. `t`/`a`/`al` are what make this diagnostic rather than merely
+     * negative — a bare `best 0.55` cannot distinguish "we found the wrong song" from "we found the
+     * right song and YouTube named the album differently", and those need opposite fixes.
+     */
+    internal fun diagnose(best: ScoredMatch): String =
+      "best=\"${best.song.artistLine} — ${best.song.title}\" ${best.explain()} " +
+        "threshold=%.2f".format(MatchScorer.CONFIDENCE_THRESHOLD) +
+        (if (best.notes.isNotEmpty()) " notes=${best.notes.joinToString(",")}" else "")
   }
 }
