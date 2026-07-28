@@ -59,4 +59,15 @@ object LaunchPlan {
     out += LaunchAttempt(url, null, VIA_CHOOSER)
     return out
   }
+
+  /**
+   * Walks [attempts] in order and returns the first that started, or `null` if none did.
+   *
+   * Separated from [attempts] and from Android so the *fall-through* behaviour is testable: a
+   * package can pass the pre-query and still refuse the start (disabled mid-flight, cross-profile
+   * restrictions, an OEM framework quirk), and when that happens the remaining layers must still
+   * run. Getting this wrong silently costs the user every fallback we built.
+   */
+  fun execute(attempts: List<LaunchAttempt>, start: (LaunchAttempt) -> Boolean): LaunchAttempt? =
+    attempts.firstOrNull(start)
 }

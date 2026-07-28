@@ -128,4 +128,73 @@ class LaunchPlanTest {
       assertEquals("via=${attempt.via}", expected, attempt.uri)
     }
   }
+
+  // --- fall-through, with an injected starter ---------------------------------------------------
+
+  /** Records what was attempted and lets a test decide which attempts "start". */
+  private class FakeStarter(private val succeedOn: (LaunchAttempt) -> Boolean) {
+    val tried = mutableListOf<String>()
+
+    fun start(attempt: LaunchAttempt): Boolean {
+      tried += attempt.via
+      return succeedOn(attempt)
+    }
+  }
+
+  @Test
+  fun `an https start failure falls through to the scheme layer, not the browser`() {
+    // The case the pre-query cannot catch: the package declares an activity, so canHandle is true,
+    // but the start still fails. Without fall-through the user loses the scheme layer entirely.
+    val starter = FakeStarter { it.via != LaunchPlan.VIA_PREFERRED }
+    val winner = LaunchPlan.execute(plan(), starter::start)
+
+    assertEquals(LaunchPlan.VIA_SCHEME, winner?.via)
+    assertEquals(schemeUri, winner?.uri)
+    assertEquals(spotify, winner?.packageName)
+    assertEquals(listOf(LaunchPlan.VIA_PREFERRED, LaunchPlan.VIA_SCHEME), starter.tried)
+  }
+
+  @Test
+  fun `a pre-query false negative also reaches the scheme layer`() {
+    // canHandle says no, so layer 1 is never planned; the scheme attempt must still be first tried.
+    val starter = FakeStarter { true }
+    val winner = LaunchPlan.execute(plan(canHandle = { _, _ -> false }), starter::start)
+
+    assertEquals(LaunchPlan.VIA_SCHEME, winner?.via)
+    assertEquals(listOf(LaunchPlan.VIA_SCHEME), starter.tried)
+  }
+
+  @Test
+  fun `when both preferred layers fail the browser runs`() {
+    val starter = FakeStarter { it.via == LaunchPlan.VIA_BROWSER }
+    val winner = LaunchPlan.execute(plan(), starter::start)
+
+    assertEquals(LaunchPlan.VIA_BROWSER, winner?.via)
+    assertEquals(browser, winner?.packageName)
+    assertEquals(
+      listOf(LaunchPlan.VIA_PREFERRED, LaunchPlan.VIA_SCHEME, LaunchPlan.VIA_BROWSER),
+      starter.tried,
+    )
+  }
+
+  @Test
+  fun `every layer is tried before giving up, and the chooser is last`() {
+    val starter = FakeStarter { false }
+    val winner = LaunchPlan.execute(plan(), starter::start)
+
+    assertNull("nothing started, so there is no winner", winner)
+    assertEquals(
+      listOf(LaunchPlan.VIA_PREFERRED, LaunchPlan.VIA_SCHEME, LaunchPlan.VIA_BROWSER, LaunchPlan.VIA_CHOOSER),
+      starter.tried,
+    )
+  }
+
+  @Test
+  fun `nothing after the first success is attempted`() {
+    val starter = FakeStarter { true }
+    val winner = LaunchPlan.execute(plan(), starter::start)
+
+    assertEquals(LaunchPlan.VIA_PREFERRED, winner?.via)
+    assertEquals("must not keep launching after one succeeded", listOf(LaunchPlan.VIA_PREFERRED), starter.tried)
+  }
 }
