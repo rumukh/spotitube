@@ -33,24 +33,33 @@ class HttpSpotifyMetadataSource(
 
   override suspend fun expandShortLink(link: SpotifyLink): SpotifyLink? =
     withContext(Dispatchers.IO) {
-      // Pinned to the app's own User-Agent on purpose. A mobile-browser UA makes spotify.link
-      // answer with `intent://…;scheme=spotify;package=com.spotify.music`, which is not a URL we
-      // can follow, and a desktop UA stops on a Branch landing page. The truthful UA is the only
-      // one observed to walk through to a canonical open.spotify.com address.
-      val finalUrl =
-        runCatching {
-          Http.resolveFinalUrl(
-            link.canonicalUrl,
-            headersFor(APP_USER_AGENT),
-            SPOTIFY_HOSTS,
-            maxRedirects = SHORT_LINK_MAX_HOPS,
-          )
-        }
-          .getOrNull()
-          ?: return@withContext null
-      // The parser drops every query parameter, so `si`, `_branch_*` and UTM values from the
-      // Branch hop never make it into anything we request or hand on.
-      SpotifyLinkParser.parse(finalUrl)?.takeIf { it.type != SpotifyEntityType.SHORT_LINK }
+      // Try the app's own User-Agent first: a mobile-browser UA makes spotify.link answer with
+      // `intent://…;scheme=spotify;package=com.spotify.music`, which is not a URL we can follow,
+      // and a desktop UA has been seen stopping on a Branch landing page.
+      //
+      // But UA is the variable here, and failing to expand has a genuinely bad consequence: we
+      // hand the original Branch link to a browser, and for a user without Spotify installed
+      // Branch's own `browser_fallback_url` lands them on the Play Store being asked to install
+      // Spotify — the exact opposite of this app's purpose, delivered to the user who most needs
+      // it to work. So try the other agents too before giving up.
+      for (agent in SHORT_LINK_USER_AGENTS) {
+        val finalUrl =
+          runCatching {
+            Http.resolveFinalUrl(
+              link.canonicalUrl,
+              headersFor(agent),
+              SPOTIFY_HOSTS,
+              maxRedirects = SHORT_LINK_MAX_HOPS,
+            )
+          }
+            .getOrNull()
+            ?: continue
+        // The parser drops every query parameter, so `si`, `_branch_*` and UTM values from the
+        // Branch hop never make it into anything we request or hand on.
+        val parsed = SpotifyLinkParser.parse(finalUrl)?.takeIf { it.type != SpotifyEntityType.SHORT_LINK }
+        if (parsed != null) return@withContext parsed
+      }
+      null
     }
 
   override suspend fun fetchTrack(link: SpotifyLink): SpotifyTrackMeta? =
@@ -119,6 +128,12 @@ class HttpSpotifyMetadataSource(
 
     /** `spotify.link` -> `spotify.app.link` -> `open.spotify.com` is three hops; allow one spare. */
     private const val SHORT_LINK_MAX_HOPS = 4
+
+    /**
+     * Agents tried in order when expanding a short link. Deliberately excludes browser UAs, which
+     * make Branch answer with an `intent://` redirect we cannot follow.
+     */
+    private val SHORT_LINK_USER_AGENTS = listOf(APP_USER_AGENT, "facebookexternalhit/1.1")
 
     /**
      * A `spotify.link` short URL redirects wherever Spotify points it; refuse to follow it off

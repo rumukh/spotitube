@@ -84,8 +84,12 @@ class LinkHandlerActivity : ComponentActivity() {
 
     // Belt-and-braces: every launch we make targets an explicit package, so a cycle should be
     // impossible. If the same link keeps coming back anyway, hand it to a browser and stop.
-    val guardKey = parsed?.canonicalUrl ?: input.orEmpty()
-    if (guardKey.isNotEmpty() && loopGuard.recordAndCheck(guardKey, System.currentTimeMillis())) {
+    //
+    // Only ever guard on a PARSED link. Keying on raw input would put the friend's whole message
+    // into the guard, into the log line below, and — worse — into LaunchIntents.open() as if it
+    // were a URL. There is also nothing to loop on without a link: we only ever launch parsed ones.
+    val guardKey = parsed?.canonicalUrl
+    if (guardKey != null && loopGuard.recordAndCheck(guardKey, System.currentTimeMillis())) {
       val report = LaunchIntents.open(this, guardKey, preferredPackage = null)
       Log.w(TAG, "RESULT outcome=LOOPGUARD $report")
       finish()
@@ -126,6 +130,22 @@ class LinkHandlerActivity : ComponentActivity() {
         result("SEARCH", report, extra = "query=\"${outcome.query}\" reason=\"${outcome.reason}\"")
       }
       is ResolveOutcome.BounceToSpotify -> {
+        // An unexpanded short link is the one case where the browser fallback actively harms the
+        // user: Branch answers a browser with `browser_fallback_url=market://details?id=…`, so
+        // someone without Spotify lands on a Play Store page asking them to install it — the exact
+        // opposite of why they installed this app. Doing nothing is more honest.
+        val unexpandedShortLink = outcome.type == SpotifyEntityType.SHORT_LINK
+        if (unexpandedShortLink && !LaunchIntents.isInstalled(this, LaunchIntents.SPOTIFY_PACKAGE)) {
+          Log.w(TAG, "RESULT outcome=BOUNCE started=false reason=\"short link unresolved, Spotify not installed\"")
+          status = "Could not open that link"
+          android.widget.Toast.makeText(
+              this,
+              "Spotitube: that short link could not be resolved, and Spotify is not installed",
+              android.widget.Toast.LENGTH_LONG,
+            )
+            .show()
+          return
+        }
         status = "Opening in Spotify"
         val report = LaunchIntents.open(this, outcome.url, LaunchIntents.SPOTIFY_PACKAGE)
         result("BOUNCE", report, extra = "spotifyType=${outcome.type}")
