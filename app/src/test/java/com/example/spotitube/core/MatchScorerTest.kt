@@ -268,7 +268,7 @@ class MatchScorerTest {
   }
 
   @Test
-  fun `artist containment is bounded to whole tokens`() {
+  fun `artist containment is bounded to whole credits`() {
     // ABBA must not match GABBA: containment has to stop at token boundaries, not any substring.
     val abba = SpotifyTrackMeta(title = "Dancing Queen", artists = listOf("ABBA"), durationSeconds = 230)
     val gabba =
@@ -285,6 +285,32 @@ class MatchScorerTest {
         listOf(song(videoId = "bbbbbbbbbbb", title = "Dancing Queen", artists = listOf("ABBA & Friends"), duration = 230)),
       )
     assertTrue("collapsed credit should match: ${real.ranked[0].explain()}", real.confident)
+  }
+
+  @Test
+  fun `a tribute band is not the artist it names`() {
+    // The credit CONTAINS the whole artist as a token run, so a sublist match accepted it. The
+    // variant veto does not catch it either: that inspects title and album, never artist credits.
+    // Splitting on collaboration delimiters leaves "U2 Tribute Band" as one credit matching nothing.
+    val u2 = SpotifyTrackMeta(title = "With Or Without You", artists = listOf("U2"), durationSeconds = 296)
+    for (impostor in listOf("U2 Tribute Band", "U2 Experience", "The U2 Show")) {
+      val outcome =
+        MatchScorer.best(
+          u2,
+          listOf(song(videoId = "aaaaaaaaaaa", title = "With Or Without You", artists = listOf(impostor), duration = 296)),
+        )
+      assertFalse("'$impostor' must not auto-play: ${outcome.ranked[0].explain()}", outcome.confident)
+    }
+
+    // U2 themselves still match, including inside a collaboration credit.
+    for (real in listOf("U2", "U2 & Green Day", "U2, Mary J. Blige")) {
+      val outcome =
+        MatchScorer.best(
+          u2,
+          listOf(song(videoId = "bbbbbbbbbbb", title = "With Or Without You", artists = listOf(real), duration = 296)),
+        )
+      assertTrue("'$real' should match: ${outcome.ranked[0].explain()}", outcome.confident)
+    }
   }
 
   @Test

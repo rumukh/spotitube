@@ -97,17 +97,25 @@ object InnerTubeParser {
    * Results, podcast episodes — the moment the expected path returned nothing.
    */
   private fun songItems(root: JsonElement): List<JsonElement> {
-    val shelves = itemsFromShelves(root).ifEmpty { findShelves(root, 0) }
-    if (shelves.isEmpty()) return emptyList()
+    // The documented envelope is trusted more than a recovered one. Within it, a single
+    // unrecognised shelf is accepted because the request pins hl=en and sends the Songs filter,
+    // so that shelf is the songs shelf even if its title string drifts.
+    val documented = itemsFromShelves(root)
+    if (documented.isNotEmpty()) return rowsFrom(documented, allowSingleUnknownShelf = true)
 
+    // The envelope itself moved, so we no longer know we are even looking at search results.
+    // Require a literal "Songs" title here and fail closed otherwise — a lone unrecognised shelf
+    // in an unknown document could be anything.
+    return rowsFrom(findShelves(root, 0), allowSingleUnknownShelf = false)
+  }
+
+  private fun rowsFrom(shelves: List<JsonElement>, allowSingleUnknownShelf: Boolean): List<JsonElement> {
+    if (shelves.isEmpty()) return emptyList()
     val songShelves = shelves.filter { runsText(it.obj("title")).equals("Songs", ignoreCase = true) }
     val chosen =
       when {
         songShelves.isNotEmpty() -> songShelves
-        // The request pins hl=en and sends the Songs filter, so a single shelf is the songs shelf
-        // even if its title string drifts. Several unrecognised shelves are genuinely ambiguous:
-        // return nothing and let the caller open search rather than guess.
-        shelves.size == 1 -> shelves
+        allowSingleUnknownShelf && shelves.size == 1 -> shelves
         else -> return emptyList()
       }
     return chosen.flatMap { shelf -> shelf.arr("contents").mapNotNull { it.obj(ITEM_KEY) } }

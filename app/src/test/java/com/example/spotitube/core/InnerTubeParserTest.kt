@@ -141,6 +141,21 @@ class InnerTubeParserTest {
   }
 
   @Test
+  fun `a moved envelope with an unrecognised shelf fails closed`() {
+    // Envelope drift plus an unrecognised title means we cannot prove we are even looking at
+    // search results. A lone unknown shelf is only trusted inside the documented envelope.
+    val body =
+      """
+      {"someNewWrapper":{"panes":[
+        {"musicShelfRenderer":{"title":{"runs":[{"text":"Top result"}]},"contents":[
+          {"musicResponsiveListItemRenderer":{"playlistItemData":{"videoId":"ttttttttttt"},
+           "flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Some Result"}]}}}]}}]}}
+      ]}}
+      """
+    assertTrue("expected no rows, got ${InnerTubeParser.parseSongs(body)}", InnerTubeParser.parseSongs(body).isEmpty())
+  }
+
+  @Test
   fun `truncated and malformed bodies degrade gracefully`() {
     val full = Fixtures.read(Fixtures.RICK_ASTLEY_SEARCH_JSON)
     val inputs =

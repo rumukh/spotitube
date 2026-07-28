@@ -321,13 +321,21 @@ object MatchScorer {
     val exact = a.intersect(b).size
     if (exact > 0) return 0.60 + 0.40 * (exact.toDouble() / minOf(a.size, b.size))
 
-    // No full-name match. Some uploads collapse "Post Malone & Swae Lee" into a single credit, so
-    // accept a WHOLE Spotify artist appearing inside a candidate credit — but bounded to token
-    // boundaries, and only in that direction. Plain substring containment is far too loose in both
-    // respects: it matches ABBA inside GABBA and U2 inside "U2 Tribute Band", and the reverse
-    // direction matches a candidate called "Post" against "Post Malone" without being them.
-    val candidateContainsWholeArtist = a.any { s -> b.any { c -> containsWholeName(c, s) } }
-    if (candidateContainsWholeArtist) return 0.55
+    // No full-name match. Some uploads collapse a collaboration into one credit string, so split
+    // each RAW candidate credit on collaboration delimiters, then canonicalise each segment.
+    // Splitting must happen before canonicalisation, which strips the very punctuation we split on.
+    //
+    // A token sublist is not enough: it accepts "u2" inside "U2 Tribute Band", which is a different
+    // act entirely. The variant veto does not save us there, because it inspects the candidate
+    // title and album — never the artist credit. Splitting instead makes "Post Malone & Swae Lee"
+    // two valid credits while "U2 Tribute Band" stays one credit that matches nothing.
+    val candidateCredits =
+      candidateArtists
+        .flatMap { splitCredits(it) }
+        .map { TextNormalizer.canonical(it) }
+        .filter { it.isNotEmpty() }
+        .toSet()
+    if (a.any { it in candidateCredits }) return 0.55
 
     val ta = a.flatMap { it.split(' ') }.filter { it.isNotEmpty() }.toSet()
     val tb = b.flatMap { it.split(' ') }.filter { it.isNotEmpty() }.toSet()
@@ -339,20 +347,20 @@ object MatchScorer {
   }
 
   /**
-   * True when [needle] appears in [haystack] as a whole token sequence — bounded by the start, the
-   * end, or a token break — rather than merely as a substring.
+   * Splits one candidate credit string into the individual artists it names.
    *
-   * Both sides are already canonicalised to space-separated tokens, so this is a sublist match:
-   * "post malone" is found in "post malone swae lee", while "abba" is NOT found in "gabba" and
-   * "u2" IS found in "u2 tribute band" only as its first token (which the variant veto then
-   * rejects on the word "tribute").
+   * Only collaboration delimiters split — `&`, `,`, `and`, `feat`, `ft`, `featuring`, `with`, `x`.
+   * Everything else stays whole, so "U2 Tribute Band" remains a single credit naming a band that
+   * is not U2, while "Post Malone & Swae Lee" becomes two credits that each match exactly.
    */
-  private fun containsWholeName(haystack: String, needle: String): Boolean {
-    val h = haystack.split(' ').filter { it.isNotEmpty() }
-    val n = needle.split(' ').filter { it.isNotEmpty() }
-    if (n.isEmpty() || n.size > h.size) return false
-    return (0..h.size - n.size).any { i -> h.subList(i, i + n.size) == n }
-  }
+  private fun splitCredits(credit: String): List<String> =
+    credit
+      .split(CREDIT_DELIMITERS)
+      .map { it.trim() }
+      .filter { it.isNotEmpty() }
+
+  private val CREDIT_DELIMITERS =
+    Regex("""\s*(?:&|,|\bx\b|\band\b|\bfeat\.?\b|\bft\.?\b|\bfeaturing\b|\bwith\b)\s*""", RegexOption.IGNORE_CASE)
 
   /** Variant markers present on the candidate but absent from the Spotify title. */
   internal fun variantMarkers(spotify: SpotifyTrackMeta, candidate: YouTubeSong): List<String> {

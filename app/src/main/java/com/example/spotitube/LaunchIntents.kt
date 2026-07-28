@@ -83,34 +83,43 @@ object LaunchIntents {
   fun open(context: Context, url: String, preferredPackage: String?, fallbackUri: String? = null): LaunchReport {
     val uri = url.toUri()
 
-    // Try each explicit target in turn: a package can pass the resolve check and still refuse the
-    // start (disabled mid-flight, cross-profile restrictions, ...), and that must not cost us the
-    // browser fallback.
-    for (target in candidateTargets(context, url, preferredPackage)) {
-      if (start(context, viewIntent(uri).setPackage(target.packageName))) {
-        return LaunchReport(true, url, target.packageName, target.via)
+    // Layer 1: the preferred app on the canonical https URL. This forwards the user's original
+    // link unmodified, so it is the safest thing to try first.
+    if (preferredPackage != null && preferredPackage != context.packageName) {
+      if (canHandle(context, uri, preferredPackage) &&
+        start(context, viewIntent(uri).setPackage(preferredPackage))
+      ) {
+        return LaunchReport(true, url, preferredPackage, "preferred-app")
       }
-    }
 
-    // Layer 2: a validated `spotify:` URI, when the caller supplied one.
-    //
-    // This is not dead code. All six `spotify:{type}:{id}` routes are screenshot-verified against
-    // the real Spotify build, whereas "explicit setPackage + https still resolves after the user
-    // disables Spotify's supported-link toggle" rests on AOSP source and has never been measured on
-    // a forked OEM framework. A custom scheme is not a web intent at all, so it structurally avoids
-    // that entire question. It also covers a false-negative from the pre-query above.
-    //
-    // It cannot re-enter us: we never register the `spotify:` scheme, and the intent is
-    // package-scoped regardless.
-    if (fallbackUri != null && preferredPackage != null && preferredPackage != context.packageName) {
-      if (start(context, viewIntent(fallbackUri.toUri()).setPackage(preferredPackage))) {
+      // Layer 2: a validated `spotify:` URI at the SAME package, before falling out to a browser.
+      //
+      // This has to come before the browser or it is unreachable: a browser start almost always
+      // succeeds, so ordering it later would skip precisely the two cases this exists for — a
+      // false negative from the pre-query above, and an https start that fails despite it.
+      //
+      // Not dead code: all six `spotify:{type}:{id}` routes are screenshot-verified against the
+      // real Spotify build, whereas "explicit setPackage + https still resolves after the user
+      // disables Spotify's supported-links toggle" rests on AOSP source and is unmeasured on a
+      // forked OEM framework. A custom scheme is not a web intent, so it sidesteps that entirely.
+      //
+      // It cannot re-enter us: we never register the `spotify:` scheme, and it is package-scoped.
+      if (fallbackUri != null && start(context, viewIntent(fallbackUri.toUri()).setPackage(preferredPackage))) {
         return LaunchReport(true, fallbackUri, preferredPackage, "scheme-fallback")
       }
     }
 
-    // A chooser is the only option left; exclude every component of ours that could claim the link
-    // so the user cannot pick Spotitube and re-enter this same code path. EXTRA_EXCLUDE_COMPONENTS
-    // is honoured *only* by a chooser intent — putting it on a plain ACTION_VIEW does nothing.
+    // Layer 3: an explicitly resolved browser. Explicit so it is provably not us.
+    browserPackage(context)?.let { browser ->
+      if (start(context, viewIntent(uri).setPackage(browser))) {
+        return LaunchReport(true, url, browser, "browser-fallback")
+      }
+    }
+
+    // Layer 4: a chooser is the only option left; exclude every component of ours that could claim
+    // the link so the user cannot pick Spotitube and re-enter this same code path.
+    // EXTRA_EXCLUDE_COMPONENTS is honoured *only* by a chooser intent — on a plain ACTION_VIEW it
+    // does nothing.
     val chooser =
       Intent.createChooser(viewIntent(uri), null).apply {
         putExtra(
