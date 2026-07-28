@@ -1,6 +1,7 @@
 package com.example.spotitube.core
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -90,6 +91,66 @@ class TextNormalizerTest {
   fun `full width and compatibility forms fold together`() {
     assertEquals(TextNormalizer.normalize("ＹＯＡＳＯＢＩ"), TextNormalizer.normalize("YOASOBI"))
     assertEquals(TextNormalizer.normalize("ﬁnale"), TextNormalizer.normalize("finale"))
+  }
+
+  // --- the pair-conditioned romanisation rule ----------------------------------------------------
+
+  @Test
+  fun `a romanisation suffix on one side compares equal`() {
+    val cases =
+      mapOf(
+        "夜の踊り子" to "夜の踊り子 - Yoru No Odoriko",
+        "高嶺の花子さん" to "高嶺の花子さん - Takaneno Hanakosan",
+        "ブルーアンバー" to "ブルーアンバー - Blue Amber",
+        "青と夏" to "青と夏 - Ao To Natsu",
+        "밤편지" to "밤편지 - Through the Night",
+        "Кино" to "Кино - Gruppa Krovi",
+        // Macrons are Latin script, so a Hepburn transliteration still qualifies.
+        "東京" to "東京 - Tōkyō",
+      )
+    for ((plain, romanised) in cases) {
+      assertEquals(plain, 1.0, TextNormalizer.similarity(plain, romanised), 1e-9)
+      assertEquals("$plain (reversed)", 1.0, TextNormalizer.similarity(romanised, plain), 1e-9)
+    }
+  }
+
+  @Test
+  fun `titles differing only by a latin suffix stay distinct`() {
+    // The case that killed the context-free version: stripping in canonical() collapsed these into
+    // one title, and artist, album and duration are identical for adjacent tracks so nothing else
+    // would have caught it.
+    val one = "同じ頭 - Part One"
+    val two = "同じ頭 - Part Two"
+    assertTrue("must not collapse to equal", TextNormalizer.similarity(one, two) < 1.0)
+    assertNotEquals(TextNormalizer.canonical(one), TextNormalizer.canonical(two))
+  }
+
+  @Test
+  fun `a numbered suffix is never treated as a romanisation`() {
+    // Digits are excluded deliberately: "Part 1" is identity, not transliteration.
+    assertTrue(TextNormalizer.similarity("同じ頭", "同じ頭 - Part 1") < 1.0)
+    assertTrue(TextNormalizer.similarity("同じ頭 - Part 1", "同じ頭 - Part 2") < 1.0)
+  }
+
+  @Test
+  fun `a latin head never qualifies, so the false-positive class stays removed`() {
+    // "Circles" vs "Circles Around The Sun" is exactly the class we spent the evening removing.
+    assertTrue(TextNormalizer.similarity("Circles", "Circles - Around The Sun") < 1.0)
+    assertTrue(TextNormalizer.similarity("Circles", "Circles Around The Sun") < 1.0)
+    assertTrue(
+      TextNormalizer.similarity("Sunflower", "Sunflower - Spider-Man: Into the Spider-Verse") < 1.0,
+    )
+  }
+
+  @Test
+  fun `a different non latin song does not match through its romanisation`() {
+    assertEquals(0.0, TextNormalizer.similarity("夜の踊り子", "新宝島 - Shin Takara Jima"), 1e-9)
+    assertEquals(0.0, TextNormalizer.similarity("夜の踊り子", "怪獣 - Kaiju"), 1e-9)
+  }
+
+  @Test
+  fun `a non latin suffix is not a romanisation`() {
+    assertTrue(TextNormalizer.similarity("夜の踊り子", "夜の踊り子 - 踊り子") < 1.0)
   }
 
   @Test

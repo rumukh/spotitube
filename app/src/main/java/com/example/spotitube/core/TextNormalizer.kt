@@ -80,42 +80,14 @@ object TextNormalizer {
   private val DASH_SEPARATOR = Regex("""\s[-–—]\s""")
 
   /**
-   * Strips YouTube Music's romanisation suffix: `夜の踊り子 - Yoru No Odoriko` → `夜の踊り子`.
-   *
-   * YouTube Music appends a Latin transliteration to non-Latin titles; Spotify does not. Left in
-   * place this is not cosmetic — a CJK title contains no spaces, so it canonicalises to a **single
-   * token**, and the appended romanisation collapses token-set recall to `1/n`. Measured: the
-   * correct recording of 夜の踊り子, by the right artist at exactly the right duration, scored a
-   * title similarity of 0.40 and fell under the confidence threshold. Whether a track played came
-   * down to how many words its romanisation happened to add.
-   *
-   * Deliberately narrow. It fires only when the head contains a non-Latin letter and the tail is
-   * purely Latin, so Latin-script titles — `Sunflower - Spider-Man: Into the Spider-Verse` — are
-   * untouched and cannot regress. It also cannot manufacture a false match between two *different*
-   * non-Latin songs: stripping leaves the CJK head, which is the discriminating part, so
-   * `新宝島 - Shin Takara Jima` still shares nothing with `夜の踊り子`.
-   *
-   * Variant vetoes are unaffected: [MatchScorer.variantMarkers] reads [normalize] on the raw title,
-   * not [canonical], so a stripped `… (agraph Remix) - … (agraph Remix)` is still rejected.
+   * Splits a trailing ` - suffix` into head and suffix, or `null` when there is no separator.
+   * Uses the *last* separator, so a head containing a dash stays intact.
    */
-  fun stripRomanisation(raw: String): String {
-    val match = DASH_SEPARATOR.findAll(raw).lastOrNull() ?: return raw
+  private fun splitDashSuffix(raw: String): Pair<String, String>? {
+    val match = DASH_SEPARATOR.findAll(raw).lastOrNull() ?: return null
     val head = raw.substring(0, match.range.first).trim()
-    val tail = raw.substring(match.range.last + 1).trim()
-    if (head.isEmpty() || tail.isEmpty()) return raw
-
-    val headIsNonLatin = codePoints(head).any { Character.isLetter(it) && !isLatinScript(it) }
-    if (!headIsNonLatin) return raw
-
-    // The tail must be a transliteration: Latin letters only, and at least one of them. Requiring a
-    // letter stops a bare numeric or symbolic suffix being mistaken for a romanisation.
-    var sawLatinLetter = false
-    for (cp in codePoints(tail)) {
-      if (!Character.isLetter(cp)) continue
-      if (!isLatinScript(cp)) return raw
-      sawLatinLetter = true
-    }
-    return if (sawLatinLetter) head else raw
+    val suffix = raw.substring(match.range.last + 1).trim()
+    return if (head.isEmpty() || suffix.isEmpty()) null else head to suffix
   }
 
   private fun codePoints(text: String): Sequence<Int> = sequence {
@@ -136,6 +108,56 @@ object TextNormalizer {
       else -> false
     }
 
+  private fun hasNonLatinLetter(text: String): Boolean =
+    codePoints(text).any { Character.isLetter(it) && !isLatinScript(it) }
+
+  /**
+   * Whether [suffix] looks like a transliteration rather than identity-bearing text.
+   *
+   * Latin letters (including macrons — Yūki, Tōkyō — since those are Latin script) plus benign
+   * punctuation and spacing. **Digits are excluded deliberately**: `Part 1` and `Part 2` are the
+   * difference between two tracks, not a romanisation of either.
+   */
+  private fun isRomanisationSuffix(suffix: String): Boolean {
+    var sawLatinLetter = false
+    for (cp in codePoints(suffix)) {
+      if (Character.isDigit(cp)) return false
+      if (!Character.isLetter(cp)) continue
+      if (!isLatinScript(cp)) return false
+      sawLatinLetter = true
+    }
+    return sawLatinLetter
+  }
+
+  /**
+   * Whether [suffixed] is [plain] carrying YouTube Music's romanisation suffix.
+   *
+   * Pair-conditioned on purpose. An earlier version stripped the suffix inside [stripNoise], which
+   * is context-free — it sees one title at a time and cannot tell a transliteration from
+   * identity-bearing text, so it permanently collapsed titles differing *only* by that suffix:
+   * `同じ頭 - Part One` and `同じ頭 - Part Two` became indistinguishable, and artist, album and
+   * duration are identical for adjacent tracks so nothing else would have caught it. It also had a
+   * far wider blast radius than intended, because [canonical] feeds artist-set comparison, album
+   * similarity and equivalence-cluster identity — not just title matching.
+   *
+   * Confining it here means the relaxation applies to exactly one comparison and only when the
+   * evidence is unambiguous.
+   */
+  private fun isRomanisationOf(suffixed: String, plain: String): Boolean {
+    // One side only. If the other title carries its own romanisation-shaped suffix, the two are
+    // being distinguished *by* their suffixes and must not be collapsed.
+    splitDashSuffix(plain)?.let { (_, otherSuffix) -> if (isRomanisationSuffix(otherSuffix)) return false }
+
+    val (head, suffix) = splitDashSuffix(suffixed) ?: return false
+    if (!isRomanisationSuffix(suffix)) return false
+    // The head must actually be non-Latin, or this is just an ordinary Latin subtitle and the
+    // "Circles" / "Circles Around The Sun" false-positive class comes straight back.
+    if (!hasNonLatinLetter(head)) return false
+
+    val canonicalHead = canonical(head)
+    return canonicalHead.isNotEmpty() && canonicalHead == canonical(plain)
+  }
+
   /** `(2022 Remaster)`, `- Remastered 2011`, `[2009 Digital Remaster]`, ... */
   private val YEARED_REMASTER =
     Regex("""[\(\[]?\s*(19|20)\d{2}\s*(digital\s+)?remaster(ed)?\s*[\)\]]?""", RegexOption.IGNORE_CASE)
@@ -148,8 +170,7 @@ object TextNormalizer {
    * that suffix *is* the title.
    */
   fun stripNoise(raw: String): String {
-    // First: YouTube Music's romanisation suffix, so everything below operates on the real title.
-    var s = stripRomanisation(raw)
+    var s = raw
     s = FEATURE.replace(s, " ")
     s = FEATURE_SUFFIX.replace(s, " ")
     s = YEARED_REMASTER.replace(s, " ")
@@ -192,6 +213,15 @@ object TextNormalizer {
     val cb = canonical(b)
     if (ca.isEmpty() || cb.isEmpty()) return 0.0
     if (ca == cb) return 1.0
+
+    // YouTube Music appends a Latin transliteration to non-Latin titles and Spotify does not:
+    // `夜の踊り子` vs `夜の踊り子 - Yoru No Odoriko`. That is not cosmetic — a CJK title has no
+    // spaces, so it canonicalises to a SINGLE token, and the appended romanisation drives token-set
+    // recall to 1/n. Measured: the correct recording, right artist, exact duration, scored 0.40 and
+    // fell under the confidence threshold; whether a track played came down to how many words its
+    // romanisation happened to add. Handled here, pair-conditioned, rather than by stripping in
+    // canonical() — see isRomanisationOf for why that was the wrong place.
+    if (isRomanisationOf(a, b) || isRomanisationOf(b, a)) return 1.0
 
     val ta = ca.split(' ').filter { it.isNotEmpty() }.toSet()
     val tb = cb.split(' ').filter { it.isNotEmpty() }.toSet()

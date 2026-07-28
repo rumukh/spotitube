@@ -88,58 +88,15 @@ class JapaneseTrackMatchingTest {
     assertTrue("instrumental must stay vetoed: ${instrumental.explain()}", instrumental.vetoed)
   }
 
-  // --- the strip itself --------------------------------------------------------------------------
+  // --- the strip itself, now pair-conditioned ----------------------------------------------------
 
   @Test
-  fun `romanisation suffixes are stripped`() {
-    val cases =
-      mapOf(
-        "夜の踊り子 - Yoru No Odoriko" to "夜の踊り子",
-        "新宝島 - Shin Takara Jima" to "新宝島",
-        "高嶺の花子さん - Takaneno Hanakosan" to "高嶺の花子さん",
-        "ブルーアンバー - Blue Amber" to "ブルーアンバー",
-        "点描の唄 - Tenbyouno Uta (feat. Sonoko Inoue)" to "点描の唄",
-        "밤편지 - Through the Night" to "밤편지",
-        "Кино - Gruppa Krovi" to "Кино",
-      )
-    for ((input, expected) in cases) {
-      assertEquals(input, expected, TextNormalizer.stripRomanisation(input))
-    }
-  }
-
-  @Test
-  fun `latin titles are never touched`() {
-    // The rule is gated on a non-Latin head precisely so nothing already working can regress.
-    val untouched =
-      listOf(
-        "Sunflower - Spider-Man: Into the Spider-Verse",
-        "Never Gonna Give You Up - Remastered",
-        "Live and Let Die",
-        "Circles",
-        "rockstar (feat. 21 Savage)",
-      )
-    for (title in untouched) {
-      assertEquals(title, title, TextNormalizer.stripRomanisation(title))
-    }
-  }
-
-  @Test
-  fun `a non latin tail is not a romanisation`() {
-    // Both sides non-Latin means this is a real two-part title, not a transliteration.
-    assertEquals("夜の踊り子 - 踊り子", TextNormalizer.stripRomanisation("夜の踊り子 - 踊り子"))
-  }
-
-  @Test
-  fun `a tail with no letters is not a romanisation`() {
-    assertEquals("夜の踊り子 - 2020", TextNormalizer.stripRomanisation("夜の踊り子 - 2020"))
-  }
-
-  @Test
-  fun `stripping never empties a title`() {
-    for (odd in listOf("夜の踊り子 - ", " - Yoru", "夜の踊り子", "", "   ")) {
-      val result = TextNormalizer.stripRomanisation(odd)
-      assertFalse("'$odd' -> '' would erase the title", odd.isNotBlank() && result.isBlank())
-    }
+  fun `the romanisation rule only fires with real evidence`() {
+    // Full-title equality via the pair rule…
+    assertEquals(1.0, TextNormalizer.similarity("夜の踊り子", "夜の踊り子 - Yoru No Odoriko"), 1e-9)
+    // …but never for a Latin head, and never when both sides carry a Latin suffix.
+    assertTrue(TextNormalizer.similarity("Circles", "Circles - Around The Sun") < 1.0)
+    assertTrue(TextNormalizer.similarity("同じ頭 - Part One", "同じ頭 - Part Two") < 1.0)
   }
 
   /** Not an assertion — prints the calibration these tests were tuned against. */
