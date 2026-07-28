@@ -16,7 +16,8 @@ sealed interface ResolveOutcome {
   data class SearchOnYouTubeMusic(val query: String, val url: String, val reason: String) : ResolveOutcome
 
   /** Albums, playlists, artists, shows and episodes go back where they came from. */
-  data class BounceToSpotify(val url: String, val type: SpotifyEntityType) : ResolveOutcome
+  data class BounceToSpotify(val url: String, val type: SpotifyEntityType, val schemeUri: String? = null) :
+    ResolveOutcome
 
   /** The input was not a Spotify link at all, or the network failed hard. */
   data class Unsupported(val reason: String) : ResolveOutcome
@@ -57,11 +58,11 @@ class SpotitubeResolver(
         parsed
       }
 
-    if (!link.isTrack) return ResolveOutcome.BounceToSpotify(link.canonicalUrl, link.type)
+    if (!link.isTrack) return ResolveOutcome.BounceToSpotify(link.canonicalUrl, link.type, link.schemeUri)
 
     val meta =
       spotify.fetchTrack(link)
-        ?: return ResolveOutcome.BounceToSpotify(link.canonicalUrl, link.type)
+        ?: return ResolveOutcome.BounceToSpotify(link.canonicalUrl, link.type, link.schemeUri)
 
     return resolveTrack(meta)
   }

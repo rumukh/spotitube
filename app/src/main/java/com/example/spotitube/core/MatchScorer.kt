@@ -321,11 +321,12 @@ object MatchScorer {
     val exact = a.intersect(b).size
     if (exact > 0) return 0.60 + 0.40 * (exact.toDouble() / minOf(a.size, b.size))
 
-    // No full-name match. Some uploads collapse "Post Malone & Swae Lee" into a single string, so
-    // accept a WHOLE Spotify artist appearing inside a candidate artist — but only in that
-    // direction. The reverse is not a whole-artist match at all: a candidate called "Post" is
-    // contained by "Post Malone" without being them, and would otherwise score 0.55 and autoplay.
-    val candidateContainsWholeArtist = a.any { s -> b.any { c -> c.contains(s) } }
+    // No full-name match. Some uploads collapse "Post Malone & Swae Lee" into a single credit, so
+    // accept a WHOLE Spotify artist appearing inside a candidate credit — but bounded to token
+    // boundaries, and only in that direction. Plain substring containment is far too loose in both
+    // respects: it matches ABBA inside GABBA and U2 inside "U2 Tribute Band", and the reverse
+    // direction matches a candidate called "Post" against "Post Malone" without being them.
+    val candidateContainsWholeArtist = a.any { s -> b.any { c -> containsWholeName(c, s) } }
     if (candidateContainsWholeArtist) return 0.55
 
     val ta = a.flatMap { it.split(' ') }.filter { it.isNotEmpty() }.toSet()
@@ -335,6 +336,22 @@ object MatchScorer {
     // Bare token overlap must stay strictly below MIN_ARTIST_SCORE: sharing a word ("Rick Roll" vs
     // "Rick Astley", "Post Lee" vs "Post Malone") is not evidence of being the same artist.
     return 0.5 * jaccard * MIN_ARTIST_SCORE
+  }
+
+  /**
+   * True when [needle] appears in [haystack] as a whole token sequence — bounded by the start, the
+   * end, or a token break — rather than merely as a substring.
+   *
+   * Both sides are already canonicalised to space-separated tokens, so this is a sublist match:
+   * "post malone" is found in "post malone swae lee", while "abba" is NOT found in "gabba" and
+   * "u2" IS found in "u2 tribute band" only as its first token (which the variant veto then
+   * rejects on the word "tribute").
+   */
+  private fun containsWholeName(haystack: String, needle: String): Boolean {
+    val h = haystack.split(' ').filter { it.isNotEmpty() }
+    val n = needle.split(' ').filter { it.isNotEmpty() }
+    if (n.isEmpty() || n.size > h.size) return false
+    return (0..h.size - n.size).any { i -> h.subList(i, i + n.size) == n }
   }
 
   /** Variant markers present on the candidate but absent from the Spotify title. */

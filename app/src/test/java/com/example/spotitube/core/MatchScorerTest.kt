@@ -255,6 +255,7 @@ class MatchScorerTest {
   fun `a shortened artist name is not a whole artist match`() {
     // "Post" is CONTAINED BY "Post Malone" without being them. Accepting the reverse substring
     // scored it 0.55, which with an exact title reached ~0.79 and auto-played a different artist.
+    // "GABBA" and "U2 Tribute Band" are the other direction: unbounded containment, not a name.
     for (impostor in listOf("Post", "Swae", "Malone Post", "Post Lee")) {
       val meta = SpotifyTrackMeta(title = "Sunflower", artists = listOf("Post Malone", "Swae Lee"), durationSeconds = 158)
       val outcome =
@@ -264,6 +265,26 @@ class MatchScorerTest {
         )
       assertFalse("'$impostor' must not auto-play: ${outcome.ranked[0].explain()}", outcome.confident)
     }
+  }
+
+  @Test
+  fun `artist containment is bounded to whole tokens`() {
+    // ABBA must not match GABBA: containment has to stop at token boundaries, not any substring.
+    val abba = SpotifyTrackMeta(title = "Dancing Queen", artists = listOf("ABBA"), durationSeconds = 230)
+    val gabba =
+      MatchScorer.best(
+        abba,
+        listOf(song(videoId = "aaaaaaaaaaa", title = "Dancing Queen", artists = listOf("GABBA"), duration = 230)),
+      )
+    assertFalse("GABBA is not ABBA: ${gabba.ranked[0].explain()}", gabba.confident)
+
+    // A genuine collapsed credit still matches, which is the case the rule exists for.
+    val real =
+      MatchScorer.best(
+        abba,
+        listOf(song(videoId = "bbbbbbbbbbb", title = "Dancing Queen", artists = listOf("ABBA & Friends"), duration = 230)),
+      )
+    assertTrue("collapsed credit should match: ${real.ranked[0].explain()}", real.confident)
   }
 
   @Test

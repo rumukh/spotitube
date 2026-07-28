@@ -78,7 +78,7 @@ object InnerTubeParser {
     if (body.isNullOrBlank()) return emptyList()
     val root = runCatching { json.parseToJsonElement(body) }.getOrNull() ?: return emptyList()
 
-    val items = itemsFromShelves(root).ifEmpty { collectItems(root, 0) }
+    val items = songItems(root)
     val seen = HashSet<String>()
     val songs = ArrayList<YouTubeSong>(items.size)
     for (item in items) {
@@ -89,49 +89,53 @@ object InnerTubeParser {
   }
 
   /**
-   * Documented path: the shelf literally titled "Songs".
+   * Rows from the Songs shelf, or nothing.
    *
-   * The request pins `hl=en` and sends the Songs filter param, so a missing "Songs" title means the
-   * schema drifted rather than that the user's locale differs. Falling back to *every* shelf would
-   * feed Videos or Top Results rows into auto-play, so we only accept an untitled fallback when
-   * there is exactly one shelf — which the filter param guarantees is the songs one. More than one
-   * unrecognised shelf is genuinely ambiguous: return nothing and let the caller open search.
+   * Tolerance for envelope drift is deliberately at the SHELF level, never the item level. An
+   * earlier version fell back to collecting every `musicResponsiveListItemRenderer` in the
+   * document, which quietly re-admitted the rows this policy exists to exclude — Videos, Top
+   * Results, podcast episodes — the moment the expected path returned nothing.
    */
-  private fun itemsFromShelves(root: JsonElement): List<JsonElement> {
-    val sections =
-      root
-        .obj("contents")
-        .obj("tabbedSearchResultsRenderer")
-        .arr("tabs")
-        .flatMap { tab -> tab.obj("tabRenderer").obj("content").obj("sectionListRenderer").arr("contents") }
-
-    val shelves = sections.mapNotNull { it.obj("musicShelfRenderer") }
+  private fun songItems(root: JsonElement): List<JsonElement> {
+    val shelves = itemsFromShelves(root).ifEmpty { findShelves(root, 0) }
     if (shelves.isEmpty()) return emptyList()
 
     val songShelves = shelves.filter { runsText(it.obj("title")).equals("Songs", ignoreCase = true) }
     val chosen =
       when {
         songShelves.isNotEmpty() -> songShelves
+        // The request pins hl=en and sends the Songs filter, so a single shelf is the songs shelf
+        // even if its title string drifts. Several unrecognised shelves are genuinely ambiguous:
+        // return nothing and let the caller open search rather than guess.
         shelves.size == 1 -> shelves
         else -> return emptyList()
       }
     return chosen.flatMap { shelf -> shelf.arr("contents").mapNotNull { it.obj(ITEM_KEY) } }
   }
 
-  /** Fallback: find every list item anywhere in the document, whatever the surrounding shape is. */
-  private fun collectItems(node: JsonElement, depth: Int): List<JsonElement> {
+  /** Documented path: the shelves under the search-results envelope. */
+  private fun itemsFromShelves(root: JsonElement): List<JsonElement> =
+    root
+      .obj("contents")
+      .obj("tabbedSearchResultsRenderer")
+      .arr("tabs")
+      .flatMap { tab -> tab.obj("tabRenderer").obj("content").obj("sectionListRenderer").arr("contents") }
+      .mapNotNull { it.obj("musicShelfRenderer") }
+
+  /** Envelope moved: find `musicShelfRenderer` nodes wherever they now live. Shelves, not items. */
+  private fun findShelves(node: JsonElement, depth: Int): List<JsonElement> {
     if (depth > MAX_DEPTH) return emptyList()
     val out = ArrayList<JsonElement>()
     when (node) {
       is JsonObject ->
         for ((key, value) in node) {
-          if (key == ITEM_KEY && value is JsonObject) {
+          if (key == "musicShelfRenderer" && value is JsonObject) {
             out += value
           } else {
-            out += collectItems(value, depth + 1)
+            out += findShelves(value, depth + 1)
           }
         }
-      is JsonArray -> for (child in node) out += collectItems(child, depth + 1)
+      is JsonArray -> for (child in node) out += findShelves(child, depth + 1)
       else -> Unit
     }
     return out

@@ -80,7 +80,7 @@ object LaunchIntents {
   fun chooseTarget(context: Context, url: String, preferredPackage: String?): Target =
     candidateTargets(context, url, preferredPackage).firstOrNull() ?: Target.ChooserExcludingSelf
 
-  fun open(context: Context, url: String, preferredPackage: String?): LaunchReport {
+  fun open(context: Context, url: String, preferredPackage: String?, fallbackUri: String? = null): LaunchReport {
     val uri = url.toUri()
 
     // Try each explicit target in turn: a package can pass the resolve check and still refuse the
@@ -89,6 +89,22 @@ object LaunchIntents {
     for (target in candidateTargets(context, url, preferredPackage)) {
       if (start(context, viewIntent(uri).setPackage(target.packageName))) {
         return LaunchReport(true, url, target.packageName, target.via)
+      }
+    }
+
+    // Layer 2: a validated `spotify:` URI, when the caller supplied one.
+    //
+    // This is not dead code. All six `spotify:{type}:{id}` routes are screenshot-verified against
+    // the real Spotify build, whereas "explicit setPackage + https still resolves after the user
+    // disables Spotify's supported-link toggle" rests on AOSP source and has never been measured on
+    // a forked OEM framework. A custom scheme is not a web intent at all, so it structurally avoids
+    // that entire question. It also covers a false-negative from the pre-query above.
+    //
+    // It cannot re-enter us: we never register the `spotify:` scheme, and the intent is
+    // package-scoped regardless.
+    if (fallbackUri != null && preferredPackage != null && preferredPackage != context.packageName) {
+      if (start(context, viewIntent(fallbackUri.toUri()).setPackage(preferredPackage))) {
+        return LaunchReport(true, fallbackUri, preferredPackage, "scheme-fallback")
       }
     }
 

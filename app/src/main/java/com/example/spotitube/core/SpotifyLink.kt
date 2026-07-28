@@ -28,6 +28,34 @@ data class SpotifyLink(
   /** Track links are the only ones we redirect to YouTube Music; everything else bounces back. */
   val isTrack: Boolean
     get() = type == SpotifyEntityType.TRACK
+
+  /**
+   * The `spotify:{type}:{id}` form, or `null` when we cannot build one we trust.
+   *
+   * Synthesised only from an id that has already passed exact-22 base62 validation, and only for a
+   * concrete entity type. That matters because Spotify declares a bare `spotify:` scheme filter
+   * with no host or path restriction: it accepts *any* `spotify:*` URI, including nonsense, and
+   * resolves successfully — so `ActivityNotFoundException` fires only when Spotify is absent and
+   * can never catch a malformed URI. The validation has to happen here or not at all.
+   *
+   * The legacy `spotify:user:{user}:playlist:{id}` form is deliberately never produced; such links
+   * are normalised to `spotify:playlist:{id}` by the parser.
+   */
+  val schemeUri: String?
+    get() {
+      val entity =
+        when (type) {
+          SpotifyEntityType.TRACK -> "track"
+          SpotifyEntityType.ALBUM -> "album"
+          SpotifyEntityType.PLAYLIST -> "playlist"
+          SpotifyEntityType.ARTIST -> "artist"
+          SpotifyEntityType.SHOW -> "show"
+          SpotifyEntityType.EPISODE -> "episode"
+          SpotifyEntityType.SHORT_LINK -> return null
+        }
+      val validId = id?.takeIf { SpotifyLinkParser.isValidId(it) } ?: return null
+      return "spotify:$entity:$validId"
+    }
 }
 
 /**
@@ -63,6 +91,9 @@ object SpotifyLinkParser {
    */
   private fun isBase62Id(id: String): Boolean =
     id.length == ID_LENGTH && id.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' }
+
+  /** Exposed so [SpotifyLink.schemeUri] validates with exactly the same rule the parser applies. */
+  internal fun isValidId(id: String): Boolean = isBase62Id(id)
 
   private val URL_IN_TEXT = Regex("""https?://[^\s<>"'\\\]}]+""", RegexOption.IGNORE_CASE)
   private val URI_IN_TEXT =

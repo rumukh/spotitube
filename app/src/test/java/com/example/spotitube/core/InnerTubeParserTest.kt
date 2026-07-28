@@ -102,6 +102,45 @@ class InnerTubeParserTest {
   }
 
   @Test
+  fun `two unrecognised shelves yield nothing rather than guessing`() {
+    // The fail-open shape: if no shelf is titled "Songs" and there are several, we must NOT fall
+    // back to scraping every list item in the document — that re-admits Videos and Top Results.
+    val body =
+      """
+      {"contents":{"tabbedSearchResultsRenderer":{"tabs":[{"tabRenderer":{"content":
+      {"sectionListRenderer":{"contents":[
+        {"musicShelfRenderer":{"title":{"runs":[{"text":"Videos"}]},"contents":[
+          {"musicResponsiveListItemRenderer":{"playlistItemData":{"videoId":"vvvvvvvvvvv"},
+           "flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Some Video"}]}}}]}}]}},
+        {"musicShelfRenderer":{"title":{"runs":[{"text":"Top result"}]},"contents":[
+          {"musicResponsiveListItemRenderer":{"playlistItemData":{"videoId":"ttttttttttt"},
+           "flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Some Result"}]}}}]}}]}}
+      ]}}}}]}}}
+      """
+    assertTrue("expected no rows, got ${InnerTubeParser.parseSongs(body)}", InnerTubeParser.parseSongs(body).isEmpty())
+  }
+
+  @Test
+  fun `a moved envelope still finds the songs shelf but only its rows`() {
+    // Envelope drift is tolerated at the SHELF level: we locate musicShelfRenderer wherever it
+    // lives, then apply the same policy. Rows outside a Songs shelf must never be returned.
+    val body =
+      """
+      {"someNewWrapper":{"panes":[
+        {"musicShelfRenderer":{"title":{"runs":[{"text":"Songs"}]},"contents":[
+          {"musicResponsiveListItemRenderer":{"playlistItemData":{"videoId":"sssssssssss"},
+           "flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Real Song"}]}}}]}}]}},
+        {"someOtherRenderer":{"contents":[
+          {"musicResponsiveListItemRenderer":{"playlistItemData":{"videoId":"xxxxxxxxxxx"},
+           "flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Not A Song"}]}}}]}}]}}
+      ]}}
+      """
+    val songs = InnerTubeParser.parseSongs(body)
+    assertEquals(1, songs.size)
+    assertEquals("sssssssssss", songs[0].videoId)
+  }
+
+  @Test
   fun `truncated and malformed bodies degrade gracefully`() {
     val full = Fixtures.read(Fixtures.RICK_ASTLEY_SEARCH_JSON)
     val inputs =

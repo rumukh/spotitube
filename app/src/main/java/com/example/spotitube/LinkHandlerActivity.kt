@@ -80,6 +80,13 @@ class LinkHandlerActivity : ComponentActivity() {
   }
 
   private fun handle(input: String?) {
+    // Claim a generation and cancel any in-flight resolve BEFORE anything else, including the loop
+    // guard. Otherwise a third identical intent that trips the guard would launch a browser while
+    // the previous resolve was still completing, and both could act.
+    resolveJob?.cancel()
+    resolveJob = null
+    val generation = ++currentGeneration
+
     // Never log the raw input. On a SEND this is the friend's entire message, which can contain
     // anything they wrote around the link, and logcat is readable by adb on the user's own phone.
     // The parsed link is enough to debug with: it is the part we actually act on.
@@ -98,18 +105,17 @@ class LinkHandlerActivity : ComponentActivity() {
     // were a URL. There is also nothing to loop on without a link: we only ever launch parsed ones.
     val guardKey = parsed?.canonicalUrl
     if (guardKey != null && loopGuard.recordAndCheck(guardKey, System.currentTimeMillis())) {
+      if (generation != currentGeneration) return
       val report = LaunchIntents.open(this, guardKey, preferredPackage = null)
       Log.w(TAG, "RESULT outcome=LOOPGUARD $report")
       finish()
       return
     }
 
-    // A second link can arrive via onNewIntent while the first is still resolving. Cancel the
-    // in-flight job and claim a generation, so only the newest request can act or finish: otherwise
+    // A second link can arrive via onNewIntent while the first is still resolving. The generation
+    // was claimed at the top of handle(), so only the newest request can act or finish: otherwise
     // whichever resolve returned first would launch its result and finish() the activity, either
     // dropping the newer intent or launching two apps back to back.
-    resolveJob?.cancel()
-    val generation = ++currentGeneration
     resolveJob =
       lifecycleScope.launch {
         val outcome =
@@ -164,7 +170,8 @@ class LinkHandlerActivity : ComponentActivity() {
           return
         }
         status = "Opening in Spotify"
-        val report = LaunchIntents.open(this, outcome.url, LaunchIntents.SPOTIFY_PACKAGE)
+        val report =
+          LaunchIntents.open(this, outcome.url, LaunchIntents.SPOTIFY_PACKAGE, fallbackUri = outcome.schemeUri)
         result("BOUNCE", report, extra = "spotifyType=${outcome.type}")
       }
       is ResolveOutcome.Unsupported -> {
