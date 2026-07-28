@@ -76,6 +76,12 @@ private const val SELF_TEST_TRACK = "https://open.spotify.com/track/4PTG3Z6ehGkB
  */
 private const val PRIMARY_LINK_HOST = "open.spotify.com"
 
+/**
+ * A canonical Spotify URL used only to ask the PackageManager *who currently opens this*. Never
+ * fetched or launched — the id is a real track so the shape is beyond question.
+ */
+private const val PROBE_TRACK_URL = "https://$PRIMARY_LINK_HOST/track/4PTG3Z6ehGkBFwjybzWkR8"
+
 @Composable
 private fun HomeScreen() {
   val context = LocalContext.current
@@ -91,6 +97,8 @@ private fun HomeScreen() {
   var linkHandlingAllowed by remember { mutableStateOf(linkHandlingEnabled(context)) }
   var spotifyInstalled by
     remember { mutableStateOf(LaunchIntents.isInstalled(context, LaunchIntents.SPOTIFY_PACKAGE)) }
+  var spotifyHoldsLinks by
+    remember { mutableStateOf(LaunchIntents.holdsLinksFor(context, PROBE_TRACK_URL, LaunchIntents.SPOTIFY_PACKAGE)) }
   var ytMusicInstalled by
     remember { mutableStateOf(LaunchIntents.isInstalled(context, LaunchIntents.YT_MUSIC_PACKAGE)) }
 
@@ -107,6 +115,7 @@ private fun HomeScreen() {
         clipboardLink = spotifyLinkInClipboard(context)
         linkHandlingAllowed = linkHandlingEnabled(context)
         spotifyInstalled = LaunchIntents.isInstalled(context, LaunchIntents.SPOTIFY_PACKAGE)
+        spotifyHoldsLinks = LaunchIntents.holdsLinksFor(context, PROBE_TRACK_URL, LaunchIntents.SPOTIFY_PACKAGE)
         ytMusicInstalled = LaunchIntents.isInstalled(context, LaunchIntents.YT_MUSIC_PACKAGE)
       }
     }
@@ -114,7 +123,7 @@ private fun HomeScreen() {
     onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
   }
 
-  val linkHandling = LinkHandling.of(linkHandlingAllowed, spotifyInstalled)
+  val linkHandling = LinkHandling.of(linkHandlingAllowed, spotifyInstalled, spotifyHoldsLinks)
 
   Column(
     modifier = Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState()).padding(20.dp),
@@ -144,6 +153,7 @@ private fun HomeScreen() {
                     .setAction(Intent.ACTION_SEND)
                     .setType("text/plain")
                     .putExtra(Intent.EXTRA_TEXT, copied)
+                    .putExtra(LinkHandlerActivity.EXTRA_SOURCE, LinkHandlerActivity.SOURCE_CLIPBOARD)
                 )
               },
             ) {
@@ -190,9 +200,14 @@ private fun HomeScreen() {
             Text(
               "This is the one setup worth doing: once it is done, tapping a Spotify link " +
                 "anywhere just works.\n\n" +
-                "Android 12 and newer only open web links in an app automatically if that app owns " +
-                "the website, and we do not own spotify.com. Tap below, turn on " +
-                "\"Open supported links\", and tick the Spotify addresses.",
+                if (spotifyInstalled) {
+                  "Spotify is no longer holding these links, so this is now a single step: tap " +
+                    "below, turn on \"Open supported links\", and tick the Spotify addresses."
+                } else {
+                  "Android 12 and newer only open web links in an app automatically if that app " +
+                    "owns the website, and we do not own spotify.com. Tap below, turn on " +
+                    "\"Open supported links\", and tick the Spotify addresses."
+                },
               style = MaterialTheme.typography.bodySmall,
             )
         }
@@ -248,6 +263,7 @@ private fun HomeScreen() {
                 .setAction(Intent.ACTION_SEND)
                 .setType("text/plain")
                 .putExtra(Intent.EXTRA_TEXT, link)
+                .putExtra(LinkHandlerActivity.EXTRA_SOURCE, LinkHandlerActivity.SOURCE_MANUAL)
             )
           },
         ) {

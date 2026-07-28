@@ -93,31 +93,32 @@ object LaunchIntents {
         browserPackage = { browserPackage(context) },
       )
 
-    for (attempt in plan) {
-      val intent =
-        if (attempt.isChooser) {
-          // EXTRA_EXCLUDE_COMPONENTS is honoured *only* by a chooser intent — on a plain
-          // ACTION_VIEW it does nothing. Exclude every component of ours that could claim the link
-          // so the user cannot pick Spotitube and re-enter this same code path.
-          Intent.createChooser(viewIntent(attempt.uri.toUri()), null).apply {
-            putExtra(
-              Intent.EXTRA_EXCLUDE_COMPONENTS,
-              arrayOf(
-                ComponentName(context, LinkHandlerActivity::class.java),
-                ComponentName(context, MainActivity::class.java),
-              ),
-            )
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-          }
-        } else {
-          viewIntent(attempt.uri.toUri()).setPackage(attempt.packageName)
-        }
-      if (start(context, intent)) {
-        return LaunchReport(true, attempt.uri, attempt.packageName, attempt.via)
-      }
+    val winner = LaunchPlan.execute(plan) { attempt -> start(context, intentFor(context, attempt)) }
+    return if (winner != null) {
+      LaunchReport(true, winner.uri, winner.packageName, winner.via)
+    } else {
+      LaunchReport(false, url, null, "no-handler")
     }
-    return LaunchReport(false, url, null, "no-handler")
   }
+
+  private fun intentFor(context: Context, attempt: com.example.spotitube.core.LaunchAttempt): Intent =
+    if (attempt.isChooser) {
+      // EXTRA_EXCLUDE_COMPONENTS is honoured *only* by a chooser intent — on a plain ACTION_VIEW it
+      // does nothing. Exclude every component of ours that could claim the link so the user cannot
+      // pick Spotitube and re-enter this same code path.
+      Intent.createChooser(viewIntent(attempt.uri.toUri()), null).apply {
+        putExtra(
+          Intent.EXTRA_EXCLUDE_COMPONENTS,
+          arrayOf(
+            ComponentName(context, LinkHandlerActivity::class.java),
+            ComponentName(context, MainActivity::class.java),
+          ),
+        )
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      }
+    } else {
+      viewIntent(attempt.uri.toUri()).setPackage(attempt.packageName)
+    }
 
   private fun viewIntent(uri: Uri): Intent =
     Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -140,6 +141,20 @@ object LaunchIntents {
     } catch (_: PackageManager.NameNotFoundException) {
       false
     }
+
+  /**
+   * Whether [packageName] is *currently* the app that opens [url].
+   *
+   * Used to tell "Spotify still holds spotify.com" apart from "Spotify is merely installed". The
+   * two look identical from `isInstalled`, but only the first means the user has to hand the domain
+   * over before they can select us.
+   */
+  fun holdsLinksFor(context: Context, url: String, packageName: String): Boolean {
+    val probe = Intent(Intent.ACTION_VIEW, url.toUri()).addCategory(Intent.CATEGORY_BROWSABLE)
+    val current =
+      context.packageManager.resolveActivity(probe, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName
+    return current == packageName
+  }
 
   /** Finds a browser that is definitely not us. Requires the `<queries>` http/https entries. */
   private fun browserPackage(context: Context): String? {

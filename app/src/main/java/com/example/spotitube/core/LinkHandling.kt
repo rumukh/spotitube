@@ -31,12 +31,16 @@ enum class LinkHandling {
     /**
      * @param enabledForUs `null` when the platform cannot report it (below API 31).
      * @param spotifyInstalled whether `com.spotify.music` is present and enabled.
+     * @param spotifyHoldsLinks whether Spotify is *currently* the app that opens `open.spotify.com`.
+     *   Distinct from [spotifyInstalled]: once the user completes step 1 of the handoff, Spotify is
+     *   still installed but no longer holds the domain, and telling them to redo step 1 at that
+     *   point — the exact moment they come back to check — is the most common way to look broken.
      */
-    fun of(enabledForUs: Boolean?, spotifyInstalled: Boolean): LinkHandling =
+    fun of(enabledForUs: Boolean?, spotifyInstalled: Boolean, spotifyHoldsLinks: Boolean): LinkHandling =
       when {
         enabledForUs == null -> NOT_REPORTABLE
         enabledForUs -> ENABLED
-        spotifyInstalled -> BLOCKED_BY_SPOTIFY
+        spotifyInstalled && spotifyHoldsLinks -> BLOCKED_BY_SPOTIFY
         else -> AVAILABLE
       }
   }
