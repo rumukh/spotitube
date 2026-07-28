@@ -1,5 +1,7 @@
 package com.example.spotitube.core
 
+import kotlinx.coroutines.CancellationException
+
 /** What the app decided to do with a link. Rendered by the Android layer into an Intent. */
 sealed interface ResolveOutcome {
 
@@ -72,7 +74,18 @@ class SpotitubeResolver(
     val query = meta.searchQuery
     val searchUrl = youTubeMusicSearchUrl(query)
 
-    val candidates = runCatching { youTube.searchSongs(query) }.getOrElse { emptyList() }
+    // Cancellation must pass straight through. A superseded request is cancelled, and converting
+    // that into an empty candidate list produces a user-facing SEARCH with
+    // reason="no candidates from search" -- a string measured verbatim on device for a track that
+    // had in fact scored 0.810. Only a REAL search failure may fall back.
+    val candidates =
+      try {
+        youTube.searchSongs(query)
+      } catch (cancellation: CancellationException) {
+        throw cancellation
+      } catch (error: Throwable) {
+        emptyList()
+      }
     if (candidates.isEmpty()) {
       return ResolveOutcome.SearchOnYouTubeMusic(query, searchUrl, "no candidates from search")
     }

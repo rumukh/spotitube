@@ -25,6 +25,7 @@ import androidx.lifecycle.lifecycleScope
 import com.example.spotitube.core.LatestLinkCoordinator
 import com.example.spotitube.core.LinkRequestOutcome
 import com.example.spotitube.core.LoopGuard
+import com.example.spotitube.core.OwnerGeneration
 import com.example.spotitube.core.ResolveOutcome
 import com.example.spotitube.core.SpotifyEntityType
 import com.example.spotitube.core.SpotifyLinkParser
@@ -98,6 +99,12 @@ class LinkHandlerActivity : ComponentActivity() {
       }
 
   private fun handle(input: String?) {
+    // Claim ownership BEFORE anything else. One Activity instance can receive two links via
+    // onNewIntent, and both await in this same lifecycleScope: without this, the older request's
+    // Superseded callback calls finish(), destroying the scope that the NEWER request's waiter is
+    // suspended in. See OwnerGeneration.
+    val myGeneration = owner.next()
+
     // Never log the raw input. On a SEND this is the friend's entire message, which can contain
     // anything they wrote around the link, and logcat is readable by adb on the user's own phone.
     // The parsed link is enough to debug with: it is the part we actually act on.
@@ -138,21 +145,28 @@ class LinkHandlerActivity : ComponentActivity() {
           // Exit silently: no launch, no search, no toast, nothing logged as a failure. Not a
           // RESULT line, so it can never be mistaken for an outcome.
           Log.i(TAG, "SUPERSEDED link=${parsed?.canonicalUrl ?: "none"}")
-          finish()
+          // Only close the Activity if nothing NEWER has since taken ownership of this instance.
+          // Finishing here regardless would destroy the lifecycleScope that the newer request's
+          // waiter is suspended in, and its result would never be consumed.
+          if (owner.isCurrent(myGeneration)) finish()
         }
         is LinkRequestOutcome.Resolved -> {
           // Atomic: a resolve that completed moments before a newer submission must not act now.
-          coordinator.consumeIfCurrent(ticket) { act(outcome.value) }
-          finish()
+          if (owner.isCurrent(myGeneration) && !isFinishing && !isDestroyed) {
+            coordinator.consumeIfCurrent(ticket) { act(outcome.value) }
+            finish()
+          }
         }
         is LinkRequestOutcome.Failed -> {
           // Log the class only. Throwable messages from the HTTP layer can embed the URL, and
           // passing the Throwable itself would print message and stack into logcat.
           Log.w(TAG, "Resolve failed (${outcome.error.javaClass.simpleName})")
-          coordinator.consumeIfCurrent(ticket) {
-            act(ResolveOutcome.Unsupported(outcome.error.javaClass.simpleName))
+          if (owner.isCurrent(myGeneration) && !isFinishing && !isDestroyed) {
+            coordinator.consumeIfCurrent(ticket) {
+              act(ResolveOutcome.Unsupported(outcome.error.javaClass.simpleName))
+            }
+            finish()
           }
-          finish()
         }
       }
     }
@@ -290,6 +304,9 @@ class LinkHandlerActivity : ComponentActivity() {
     }
 
     /** Shared across instances: the launch mode is `standard`, so every intent builds a new one. */
+  /** Guards this instance's own callbacks; see OwnerGeneration. Instance-scoped, NOT process. */
+  private val owner = OwnerGeneration()
+
     private val loopGuard = LoopGuard()
 
     /**
