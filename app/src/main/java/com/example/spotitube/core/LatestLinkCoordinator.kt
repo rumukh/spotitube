@@ -40,15 +40,19 @@ class LinkTicket<T> internal constructor(
  * so this has to be process-scoped: per-instance state cannot see across instances, and measured on
  * device both launched, with the *older* link winning 3 of 3 at ~800 ms spacing.
  *
- * **The settle window** is a mechanism kept for one hypothetical arbitration cannot cover: an old
- * resolve finishing and launching at 700 ms with the next tap landing at 800 ms, where no token can
- * undo a launch that already happened. **Its default is zero, because that case has never been
- * observed.** Every measured failure — 250 ms, 500 ms and 800 ms spacings alike — had the newer
- * request submitted while the older was still resolving, which is precisely what arbitration fixes.
- * The device trace is unambiguous: `INPUT` A 09.432, `INPUT` B 09.683, B result 10.466, stale A
- * result 10.766 — B existed **1,083 ms** before A's side effect. A non-zero default would tax the
- * overwhelmingly common single-tap path to prevent a failure no measurement has produced, so
- * [settleWindowMillis] stays injectable and tested, and stays off.
+ * **The settle window** covers what arbitration provably cannot: latest-wins can only suppress an
+ * older request once a newer one **exists**, so if A resolves and launches at 400 ms and B is tapped
+ * at 600 ms, no token can undo a side effect that already happened. Only a quiet window can. It
+ * defaults to one second and runs *concurrently* with the resolve, so the wait is
+ * `max(resolve, window)` and is usually absorbed entirely at the measured ~0.8–1.3 s device latency.
+ * The case it guards is ordinary rather than exotic: the loop guard deliberately permits a same-link
+ * double tap and trips only on the third hit, so without a window a user who taps again because
+ * nothing visibly happened gets two launches. See [DEFAULT_SETTLE_WINDOW_MILLIS].
+ *
+ * The two mechanisms are kept separable on purpose. `arbitration alone, with the window off` is a
+ * standing test at every measured spacing, so the concurrency suite can never be green merely
+ * because a timer masked a race — if turning the window off breaks those tests, the arbitration is
+ * broken and the window is hiding it.
  *
  * The resolve job deliberately runs in [scope] and is **not** a child of any Activity: the older
  * instance calls `finish()`, and a lifecycle-tied job for the *newest* request would be killed by
@@ -154,28 +158,36 @@ class LatestLinkCoordinator<T>(
     /**
      * How long the app waits for things to go quiet before acting on a resolved link.
      *
-     * **Zero.** Not "no window was considered" — a window was built, measured against the device
-     * evidence, and switched off because the evidence does not support paying for it:
+     * **One second.** Arbitration alone covers every *measured* failure — and a zero-window test
+     * still proves that, deliberately, so the concurrency suite cannot be green merely because a
+     * timer masked a race. The window exists for the case arbitration provably cannot reach:
      *
-     * * Every observed failure (250 ms, 500 ms and 800 ms spacings) had the newer request submitted
-     *   **while the older was still resolving**. Process-scoped latest-wins arbitration fixes all of
-     *   them with no added latency. Measured resolve is ~0.8–1.3 s, far wider than any tap gap a
-     *   human produces.
-     * * The case a window would fix — an older resolve completing and launching *before* the next
-     *   tap exists — has **never been observed**. Once A has completed and switched apps, B is
-     *   reasonably a separate action anyway.
-     * * A non-zero default therefore taxes the overwhelmingly common single-tap path to prevent a
-     *   failure no measurement has produced.
+     * * Latest-wins can only suppress an older request once a newer one **exists**. If A resolves
+     *   and launches at 400 ms and B is tapped at 600 ms, no token can undo a side effect that has
+     *   already happened. Only a quiet window can.
+     * * That case is not exotic. **The loop guard does not coalesce a same-link double tap** — it
+     *   deliberately permits two hits and trips only on the third. Tapping twice because nothing
+     *   visibly happened for a second is the *ordinary* rapid interaction, not a contrived one.
+     * * A second launch is not cosmetic. The older request audibly plays, mutates YouTube Music's
+     *   queue, history and notification state, may interrupt casting, and can remain the effective
+     *   result if the newer resolve later degrades to SEARCH. For an app whose whole promise is one
+     *   exact recording, letting a wrong one play first contradicts the promise.
      *
-     * The parameter stays injectable and a test still proves a synthetic non-zero value coalesces a
-     * future-arrival request, so the mechanism is exercised and re-enabling it is a one-line change
-     * if evidence ever appears. Until then the resolve path skips it entirely — no dispatch, no join.
+     * **Why 1,000 and not less.** Wrong-order bursts were measured on device through ~800 ms
+     * spacings; 1,000 ms adds ~200 ms of scheduling and device headroom. A shorter 300–400 ms
+     * compromise was rejected on principle: it knowingly fails the measured 500 ms and 800 ms
+     * cases, and "mostly covers" is not a correctness boundary.
      *
-     * **Do not raise this without a device trace showing a second launch that arbitration missed.**
-     * The concurrency tests must pass because resolvers are held *overlapping*, never because a
-     * timer masked the race; if a window is what makes them green, the arbitration is broken and the
-     * window is hiding it.
+     * **What it costs, honestly.** The window runs *concurrently* with the resolve and the wait is
+     * `max(resolve, window)`, so at the measured device latency of ~0.8–1.3 s it is usually free.
+     * It is not free on a warm connection: a 400 ms resolve now waits the full second. That is a
+     * real regression on the common single-tap path, accepted deliberately in exchange for never
+     * playing the wrong recording first. The spinner gives immediate feedback meanwhile.
+     *
+     * Treat this as a conservative **initial** value, not dogma. It may be reduced with device
+     * evidence across warm and cold, wifi and mobile — but never below the largest burst interval
+     * we promise to coalesce. Do not add telemetry for it.
      */
-    const val DEFAULT_SETTLE_WINDOW_MILLIS = 0L
+    const val DEFAULT_SETTLE_WINDOW_MILLIS = 1_000L
   }
 }

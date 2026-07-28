@@ -87,19 +87,22 @@ class LatestLinkCoordinatorTest {
   // --- 1. A then B at several spacings ----------------------------------------------------------
 
   @Test
-  fun `overlapping taps yield one launch at every measured spacing, with no settle window`() {
-    // THE DEVICE CASE, and the reason the settle window defaults to zero.
+  fun `overlapping taps yield one launch at every measured spacing, ARBITRATION ALONE`() {
+    // THE DEVICE CASE, with the settle window explicitly OFF.
     //
-    // Every measured failure had B submitted while A was STILL RESOLVING: device trace INPUT A
-    // 09.432, INPUT B 09.683, B result 10.466, stale A result 10.766 — B existed 1,083 ms before
-    // A's side effect. So A's gate is deliberately left OPEN across the gap here, and only opened
-    // after B is submitted. Nothing but arbitration can be producing the result: with a zero
-    // window there is no timer to mask anything.
+    // This is pinned to zero deliberately and must stay that way. Every measured failure had B
+    // submitted while A was STILL RESOLVING: device trace INPUT A 09.432, INPUT B 09.683, B result
+    // 10.466, stale A result 10.766 — B existed 1,083 ms before A's side effect. Arbitration is what
+    // fixes that, and with no timer running there is nothing else that could be.
+    //
+    // If this test ever needs the window to pass, the arbitration is broken and the window is
+    // hiding it. That is the whole reason for keeping a zero-window case after the default became
+    // non-zero.
     //
     // 800 ms is included precisely because the old 500 ms window could not cover it. It passes.
     for (gap in listOf(0L, 100L, 250L, 400L, 500L, 800L)) {
       runTest {
-        val h = Harness(TestScope(testScheduler))
+        val h = Harness(TestScope(testScheduler), settleWindowMillis = 0L)
         val a = h.submit("A")
         // A is in flight and stays in flight — resolution is NOT completed here.
         testScheduler.advanceTimeBy(gap)
@@ -115,6 +118,104 @@ class LatestLinkCoordinatorTest {
         assertEquals("gap=$gap: exactly one launch", listOf("B"), h.launches)
         assertEquals("gap=$gap: and it is B's payload", "B", b.launched)
       }
+    }
+  }
+
+  @Test
+  fun `the shipped default coalesces a burst at every measured spacing`() {
+    // The same spacings against the REAL default, so the shipped configuration is covered and not
+    // merely the stripped-down one above.
+    for (gap in listOf(0L, 100L, 250L, 500L, 800L, 999L)) {
+      runTest {
+        val h = Harness(TestScope(testScheduler))
+        val a = h.submit("A")
+        // A resolves IMMEDIATELY here — the hard case. Without a window A would launch at once and
+        // no later token could undo it; only the quiet deadline can hold it back.
+        h.resolveNow("A")
+        testScheduler.advanceTimeBy(gap)
+
+        val b = h.submit("B")
+        h.resolveNow("B")
+        testScheduler.advanceUntilIdle()
+
+        assertEquals("gap=$gap: exactly one launch", listOf("B"), h.launches)
+        assertEquals("gap=$gap: and it is the NEWEST", "B", h.launches.single())
+        assertEquals("gap=$gap: A must be superseded, never failed", "superseded", a.outcome)
+        assertEquals("gap=$gap: B must resolve", "resolved", b.outcome)
+      }
+    }
+  }
+
+  @Test
+  fun `beyond the settle window two taps are two deliberate actions`() = runTest {
+    // The counterpart, and why the window is a burst-coalescer rather than a mute button. Once the
+    // quiet deadline has passed, A has launched and switched apps; a later tap is a NEW intention
+    // and suppressing it would be a bug, not a fix.
+    val h = Harness(TestScope(testScheduler))
+    val a = h.submit("A")
+    h.resolveNow("A")
+    testScheduler.advanceUntilIdle() // well past the deadline: A completes and acts
+
+    assertEquals("A acted alone", listOf("A"), h.launches)
+
+    val b = h.submit("B")
+    h.resolveNow("B")
+    testScheduler.advanceUntilIdle()
+
+    assertEquals("both act, deliberately", listOf("A", "B"), h.launches)
+    assertEquals("and the newer link is last, so it is what plays", "B", h.launches.last())
+    assertEquals("resolved", a.outcome)
+    assertEquals("resolved", b.outcome)
+  }
+
+  @Test
+  fun `the settle boundary belongs to the OLD burst, so equality coalesces`() {
+    // The reviewer's instruction was to pick a side of the boundary and test the documented choice
+    // rather than assert race-prone semantics. This documents the MEASURED behaviour rather than a
+    // decreed one — the first draft of this test predicted the opposite and was wrong:
+    //
+    //   gap  999 ms -> coalesced. Deadline not reached.
+    //   gap 1000 ms -> coalesced. A's delay(1000) fires at exactly 1000, but its completion has not
+    //                  been delivered to the owner by the time B is submitted at the same instant,
+    //                  so B still supersedes it.
+    //   gap 1001 ms -> two actions. The first spacing that genuinely separates.
+    //
+    // So the window is [0, 1000] — INCLUSIVE at the top. Equality belongs to the old burst. If you
+    // are changing the constant, this test tells you the coalesced range is `<= window`, not
+    // `< window`.
+    for ((gap, expected) in listOf(999L to listOf("B"), 1_000L to listOf("B"), 1_001L to listOf("A", "B"))) {
+      runTest {
+        val h = Harness(TestScope(testScheduler))
+        h.submit("A")
+        h.resolveNow("A")
+        testScheduler.advanceTimeBy(gap)
+        h.submit("B")
+        h.resolveNow("B")
+        testScheduler.advanceUntilIdle()
+        assertEquals("gap=$gap", expected, h.launches)
+      }
+    }
+  }
+
+  @Test
+  fun `the quiet timer restarts on every submission, even an instant one`() {
+    // The nuance that a generation check alone would miss. Three taps at 600 ms, each resolving
+    // INSTANTLY. If the deadline were anchored to the first submission it would expire at 1,000 ms
+    // and the third tap at 1,200 ms would act separately. It is anchored per submission, so the
+    // window keeps sliding and the burst stays one action.
+    runTest {
+      val h = Harness(TestScope(testScheduler))
+      h.submit("A")
+      h.resolveNow("A")
+      testScheduler.advanceTimeBy(600)
+      h.submit("B")
+      h.resolveNow("B")
+      testScheduler.advanceTimeBy(600) // 1,200 ms after A — past A's deadline, inside B's
+      h.submit("C")
+      h.resolveNow("C")
+      testScheduler.advanceUntilIdle()
+
+      assertEquals("a sliding window keeps the whole burst as one action", listOf("C"), h.launches)
     }
   }
 
@@ -144,46 +245,37 @@ class LatestLinkCoordinatorTest {
   }
 
   @Test
-  fun `a request that completed before the next one existed is a separate action`() = runTest {
-    // The deliberate counterpart, and why zero is not simply "less safe". Once A has resolved,
-    // launched and switched apps, a later tap is a NEW intention and must be honoured. Coalescing
-    // it would be a bug, not a fix. This is the behaviour a non-zero default would break.
-    val h = Harness(TestScope(testScheduler))
-    val a = h.submit("A")
-    h.resolveNow("A")
-    testScheduler.advanceUntilIdle() // A fully completes and acts, before B exists at all
+  fun `a window coalesces a future arrival, which arbitration alone cannot`() {
+    // The one case a window uniquely fixes, isolated: A completes at 0 ms, B arrives at 800 ms.
+    // Arbitration is powerless here because A's side effect would already have happened before B
+    // existed. This is the test that justifies the window's existence at all.
+    runTest {
+      val h = Harness(TestScope(testScheduler), settleWindowMillis = 1_000L)
+      val a = h.submit("A")
+      h.resolveNow("A")
+      testScheduler.advanceTimeBy(800)
 
-    assertEquals("A acted alone", listOf("A"), h.launches)
+      val b = h.submit("B")
+      h.resolveNow("B")
+      testScheduler.advanceUntilIdle()
 
-    val b = h.submit("B")
-    h.resolveNow("B")
-    testScheduler.advanceUntilIdle()
+      assertEquals(listOf("B"), h.launches)
+      assertEquals("superseded", a.outcome)
+    }
+    // ...and with the window off, the same sequence produces the defect. Without this the test
+    // above would not show that the window is what did the work.
+    runTest {
+      val h = Harness(TestScope(testScheduler), settleWindowMillis = 0L)
+      h.submit("A")
+      h.resolveNow("A")
+      testScheduler.advanceTimeBy(800)
 
-    assertEquals("both act, deliberately", listOf("A", "B"), h.launches)
-    assertEquals("and the newer link is last, so it is what plays", "B", h.launches.last())
-    assertEquals("resolved", a.outcome)
-    assertEquals("resolved", b.outcome)
-  }
+      h.submit("B")
+      h.resolveNow("B")
+      testScheduler.advanceUntilIdle()
 
-  @Test
-  fun `OPTIONAL MECHANISM - a non-default window coalesces a future arrival`() = runTest {
-    // The settle mechanism is OFF by default but must remain correct, so re-enabling it is a
-    // one-line change rather than a rework. This is the only case a window fixes: A completes at
-    // 0 ms, B arrives at 800 ms, and nothing but a window can suppress A's launch.
-    //
-    // It is kept as evidence of what a window buys — NOT as a reason to turn one on. No device
-    // trace has ever produced this shape; see DEFAULT_SETTLE_WINDOW_MILLIS.
-    val h = Harness(TestScope(testScheduler), settleWindowMillis = 1_000L)
-    val a = h.submit("A")
-    h.resolveNow("A")
-    testScheduler.advanceTimeBy(800)
-
-    val b = h.submit("B")
-    h.resolveNow("B")
-    testScheduler.advanceUntilIdle()
-
-    assertEquals(listOf("B"), h.launches)
-    assertEquals("superseded", a.outcome)
+      assertEquals("without a window this is the two-launch defect", listOf("A", "B"), h.launches)
+    }
   }
 
   // --- 2. a resolver that ignores cancellation and returns late ---------------------------------
@@ -362,7 +454,7 @@ class LatestLinkCoordinatorTest {
   // --- 6. the settle window ----------------------------------------------------------------------
 
   @Test
-  fun `OPTIONAL MECHANISM - an isolated request delivers after a non-default settle window`() = runTest {
+  fun `an isolated request delivers after the settle window`() = runTest {
     val h = Harness(TestScope(testScheduler), settleWindowMillis = 500L)
     val a = h.submit("A")
     h.resolveNow("A") // resolves immediately; the window has not elapsed
@@ -376,7 +468,7 @@ class LatestLinkCoordinatorTest {
   }
 
   @Test
-  fun `OPTIONAL MECHANISM - a second tap inside a non-default window suppresses the first`() = runTest {
+  fun `a second tap inside the window suppresses the first`() = runTest {
     // The case arbitration alone provably cannot fix: without the window, A would already have
     // launched before B existed, and no token can undo a launch that has happened.
     val h = Harness(TestScope(testScheduler), settleWindowMillis = 500L)
@@ -393,7 +485,7 @@ class LatestLinkCoordinatorTest {
   }
 
   @Test
-  fun `OPTIONAL MECHANISM - two taps beyond a non-default window are two separate actions`() = runTest {
+  fun `two taps beyond the window are two separate actions`() = runTest {
     val h = Harness(TestScope(testScheduler), settleWindowMillis = 500L)
     h.submit("A")
     h.resolveNow("A")
@@ -407,7 +499,7 @@ class LatestLinkCoordinatorTest {
   }
 
   @Test
-  fun `OPTIONAL MECHANISM - a non-default window is absorbed when resolving takes longer`() = runTest {
+  fun `the window is absorbed entirely when resolving takes longer`() = runTest {
     val h = Harness(TestScope(testScheduler), settleWindowMillis = 500L)
     h.submit("A")
     // Resolve returns at 900ms, well past the window, so the window adds no delay of its own.
