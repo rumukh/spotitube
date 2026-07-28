@@ -27,6 +27,7 @@ import com.example.spotitube.core.ResolveOutcome
 import com.example.spotitube.core.SpotifyEntityType
 import com.example.spotitube.core.SpotifyLinkParser
 import com.example.spotitube.core.SpotitubeResolver
+import com.example.spotitube.core.YouTubeMusic
 import com.example.spotitube.net.HttpSpotifyMetadataSource
 import com.example.spotitube.net.InnerTubeMusicSearch
 import com.example.spotitube.theme.SpotitubeTheme
@@ -162,14 +163,20 @@ class LinkHandlerActivity : ComponentActivity() {
         )
         status = "Opening ${outcome.description}"
         val report = LaunchIntents.open(this, outcome.url, LaunchIntents.YT_MUSIC_PACKAGE)
-        result("PLAY", report, extra = "videoId=${outcome.videoId} score=${"%.3f".format(outcome.score)}")
+        result(
+          "PLAY",
+          report,
+          extra =
+            "strategy=${YouTubeMusic.WATCH_STRATEGY} videoId=${outcome.videoId} " +
+              "score=${"%.3f".format(outcome.score)}",
+        )
       }
       is ResolveOutcome.SearchOnYouTubeMusic -> {
         Log.i(TAG, "NO CONFIDENT MATCH reason=${outcome.reason}")
         status = "No confident match — opening search"
         val report = LaunchIntents.open(this, outcome.url, LaunchIntents.YT_MUSIC_PACKAGE)
         // The query is the artist and title the user is looking up; keep it out of logcat.
-        result("SEARCH", report, extra = "reason=\"${outcome.reason}\"")
+        result("SEARCH", report, extra = "strategy=${YouTubeMusic.SEARCH_STRATEGY} reason=\"${outcome.reason}\"")
       }
       is ResolveOutcome.BounceToSpotify -> {
         // An unexpanded short link is the one case where the browser fallback actively harms the
@@ -178,11 +185,27 @@ class LinkHandlerActivity : ComponentActivity() {
         // opposite of why they installed this app. Doing nothing is more honest.
         val unexpandedShortLink = outcome.type == SpotifyEntityType.SHORT_LINK
         if (unexpandedShortLink && !LaunchIntents.isInstalled(this, LaunchIntents.SPOTIFY_PACKAGE)) {
-          Log.w(TAG, "RESULT outcome=BOUNCE started=false reason=\"short link unresolved, Spotify not installed\"")
+          // The most total of total failures: nothing was launched and nothing can be. Route it
+          // through the same clipboard recovery as any other dead end, or this is the one path
+          // that leaves the user with no way to reach their own link.
+          //
+          // Copy the ORIGINAL short URL, not a canonical one — we never resolved it, so the short
+          // URL is the only address we actually have.
+          val copied = copyToClipboard(outcome.url)
+          Log.w(
+            TAG,
+            "RESULT outcome=BOUNCE started=false copied=$copied " +
+              "reason=\"short link unresolved, Spotify not installed\"",
+          )
           status = "Could not open that link"
           android.widget.Toast.makeText(
               this,
-              "Spotitube: that short link could not be resolved, and Spotify is not installed",
+              if (copied) {
+                "Spotitube: that short link could not be resolved and Spotify is not installed — " +
+                  "the link is on your clipboard"
+              } else {
+                "Spotitube: that short link could not be resolved, and Spotify is not installed"
+              },
               android.widget.Toast.LENGTH_LONG,
             )
             .show()

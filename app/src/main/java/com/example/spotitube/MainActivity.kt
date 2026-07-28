@@ -160,7 +160,8 @@ private fun HomeScreen() {
               Text(if (parsedClip.isTrack) "Open in YouTube Music" else "Open in Spotify")
             }
             Text(
-              "This works any time: copy a link, open Spotitube, tap once. No setup needed.",
+              "This works whenever the copied link is still on your clipboard: copy a link, open " +
+                "Spotitube, tap once. No setup needed.",
               style = MaterialTheme.typography.bodySmall,
             )
           }
@@ -180,13 +181,16 @@ private fun HomeScreen() {
             )
           LinkHandling.ENABLED ->
             Text(
-              "Set up. Tapping a Spotify link in any app opens Spotitube directly.",
+              "Set up. Tapping a Spotify link opens Spotitube, in apps that hand links to " +
+                "Android. Some apps open links in their own built-in browser instead — " +
+                "Telegram's \"Open In-App\" is one — and those bypass this setting entirely. Use " +
+                "the copy method below when that happens.",
               style = MaterialTheme.typography.bodySmall,
             )
           LinkHandling.BLOCKED_BY_SPOTIFY ->
             Text(
-              "This is the one setup worth doing: once it is done, tapping a Spotify link " +
-                "anywhere just works.\n\n" +
+              "This is the one setup worth doing: once it is done, tapping a Spotify link opens " +
+                "it here, in apps that hand links to Android.\n\n" +
                 "Spotify owns spotify.com, so Android has given those links to the Spotify app, " +
                 "and only one app can hold them. Handing them over takes two steps:\n\n" +
                 "1. In Spotify's settings, turn OFF \"Open supported links\".\n" +
@@ -198,8 +202,8 @@ private fun HomeScreen() {
             )
           LinkHandling.AVAILABLE ->
             Text(
-              "This is the one setup worth doing: once it is done, tapping a Spotify link " +
-                "anywhere just works.\n\n" +
+              "This is the one setup worth doing: once it is done, tapping a Spotify link opens " +
+                "it here, in apps that hand links to Android.\n\n" +
                 if (spotifyInstalled) {
                   "Spotify is no longer holding these links, so this is now a single step: tap " +
                     "below, turn on \"Open supported links\", and tick the Spotify addresses."

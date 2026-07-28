@@ -68,6 +68,15 @@ object YouTubeMusic {
    */
   const val ORIGIN = "https://music.youtube.com"
 
+  /**
+   * Identifies *how* a launch target was constructed, so a wrong-target report can be traced to the
+   * URL shape that produced it without reproducing the run. Bump the suffix when the shape changes;
+   * that is the point of versioning it.
+   */
+  const val WATCH_STRATEGY = "watch-v1"
+
+  const val SEARCH_STRATEGY = "search-v1"
+
   fun searchUrl(query: String): String =
     "$ORIGIN/search?q=" + java.net.URLEncoder.encode(query, "UTF-8").replace("+", "%20")
 }

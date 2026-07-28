@@ -65,7 +65,7 @@ class LiveNetworkTest {
   }
 
   @Test
-  fun shortLinkFormatIsRejectedCleanlyWhenItCannotBeExpanded() = runBlocking {
+  fun unresolvableShortLinkDegradesToBounce_notEvidenceOfExpansion() = runBlocking {
     // A made-up short code: the point is that a dead short link degrades to a Spotify bounce
     // rather than throwing or searching YouTube for nothing.
     //
