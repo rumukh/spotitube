@@ -79,6 +79,24 @@ class LinkHandlerActivity : ComponentActivity() {
     return intent?.getCharSequenceExtra(android.content.Intent.EXTRA_TEXT)?.toString()
   }
 
+  /**
+   * Which route delivered this intent, for the log line only.
+   *
+   * `ACTION_SEND` alone cannot tell an external share apart from our own in-app buttons, and they
+   * now carry very different weight: Signal and Telegram do not expose the share sheet on a link,
+   * so clipboard is the zero-setup path that actually gets used while share is comparatively rare.
+   *
+   * Our own launches tag themselves. Nothing is trusted from this beyond a log label — a hostile
+   * app could set the extra, and all it would achieve is a mislabelled diagnostic.
+   */
+  private fun inputSource(): String =
+    intent?.getStringExtra(EXTRA_SOURCE)
+      ?: when (intent?.action) {
+        android.content.Intent.ACTION_VIEW -> SOURCE_VIEW
+        android.content.Intent.ACTION_SEND -> SOURCE_SHARE
+        else -> "unknown"
+      }
+
   private fun handle(input: String?) {
     // Claim a generation and cancel any in-flight resolve BEFORE anything else, including the loop
     // guard. Otherwise a third identical intent that trips the guard would launch a browser while
@@ -93,7 +111,7 @@ class LinkHandlerActivity : ComponentActivity() {
     val parsed = SpotifyLinkParser.findIn(input)
     Log.i(
       TAG,
-      "INPUT action=${intent?.action} link=${parsed?.canonicalUrl ?: "none"}" +
+      "INPUT action=${intent?.action} source=${inputSource()} link=${parsed?.canonicalUrl ?: "none"}" +
         (if (parsed == null && !input.isNullOrBlank()) " (no Spotify link in ${input.length} chars)" else ""),
     )
 
@@ -218,6 +236,21 @@ class LinkHandlerActivity : ComponentActivity() {
   companion object {
     /** Fixed logcat tag — the emulator verification greps for `RESULT outcome=`. */
     const val TAG = "Spotitube"
+
+    /** Set by our own in-app launches so the log can tell them from an external share. */
+    const val EXTRA_SOURCE = "com.example.spotitube.extra.SOURCE"
+
+    /** Tapped a link somewhere else on the device. */
+    const val SOURCE_VIEW = "view"
+
+    /** Another app's share sheet. Rare in practice — Signal and Telegram do not offer it on links. */
+    const val SOURCE_SHARE = "share"
+
+    /** The one-tap card on our own main screen, fed by the clipboard. */
+    const val SOURCE_CLIPBOARD = "clipboard"
+
+    /** The paste box on our own main screen. */
+    const val SOURCE_MANUAL = "manual"
 
     val resolver: SpotitubeResolver by lazy {
       SpotitubeResolver(HttpSpotifyMetadataSource(), InnerTubeMusicSearch())
