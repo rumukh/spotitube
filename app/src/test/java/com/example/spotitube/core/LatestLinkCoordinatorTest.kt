@@ -1,14 +1,15 @@
 package com.example.spotitube.core
 
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlin.coroutines.suspendCoroutine
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -165,7 +166,7 @@ class LatestLinkCoordinatorTest {
   }
 
   @Test
-  fun `a synthetic non-zero window still coalesces a future arrival`() = runTest {
+  fun `OPTIONAL MECHANISM - a non-default window coalesces a future arrival`() = runTest {
     // The settle mechanism is OFF by default but must remain correct, so re-enabling it is a
     // one-line change rather than a rework. This is the only case a window fixes: A completes at
     // 0 ms, B arrives at 800 ms, and nothing but a window can suppress A's launch.
@@ -190,18 +191,27 @@ class LatestLinkCoordinatorTest {
   @Test
   fun `a resolver that ignores cancellation still cannot act`() = runTest {
     val launches = mutableListOf<String>()
+    val returnedLate = mutableListOf<String>()
+    var resumeA: Continuation<String>? = null
     val slowGate = CompletableDeferred<String>()
+
     val coordinator =
       LatestLinkCoordinator<String>(
         scope = TestScope(testScheduler),
-        settleWindowMillis = 500L,
         resolve = { input ->
           if (input == "A") {
-            // Deliberately uncooperative: ignores cancellation for a while, then returns late.
-            withContext(NonCancellable) {
-              delay(2_000)
-              "A"
-            }
+            // `suspendCoroutine`, deliberately NOT `suspendCancellableCoroutine` and NOT
+            // `withContext(NonCancellable)`. Cancelling the job cannot interrupt this, and nothing
+            // between the resume and the return is a suspension point, so A GENUINELY RETURNS a
+            // value after B has superseded it.
+            //
+            // The earlier NonCancellable version could not fail: on exiting the block back into an
+            // already-cancelled parent, withContext's prompt cancellation threw before `resolve`
+            // ever returned, so A never returned late and the guard under test never ran. The
+            // `returnedLate` assertion below is what stops that regressing silently.
+            val value = suspendCoroutine<String> { resumeA = it }
+            returnedLate += value
+            value
           } else {
             slowGate.await()
           }
@@ -209,9 +219,15 @@ class LatestLinkCoordinatorTest {
       )
 
     val ticketA = coordinator.submit("A")
+    val outcomeA = mutableListOf<String>()
     val a = launch {
-      if (ticketA.await() is LinkRequestOutcome.Resolved) {
-        coordinator.consumeIfCurrent(ticketA) { launches += "A" }
+      when (ticketA.await()) {
+        is LinkRequestOutcome.Superseded -> outcomeA += "superseded"
+        is LinkRequestOutcome.Resolved -> {
+          outcomeA += "resolved"
+          coordinator.consumeIfCurrent(ticketA) { launches += "A" }
+        }
+        is LinkRequestOutcome.Failed -> outcomeA += "failed"
       }
     }
     testScheduler.advanceTimeBy(100)
@@ -224,11 +240,69 @@ class LatestLinkCoordinatorTest {
     }
     slowGate.complete("B")
     testScheduler.advanceUntilIdle()
+
+    // Only NOW does the uncancellable A come back — long after B superseded and acted.
+    resumeA!!.resume("A")
+    testScheduler.advanceUntilIdle()
     a.join()
     b.join()
 
-    assertEquals("the generation consume must block a late, uncancellable A", listOf("B"), launches)
+    assertEquals("the test is worthless unless A really did return late", listOf("A"), returnedLate)
+    assertEquals("a late A must not launch", listOf("B"), launches)
+    assertEquals("and its owner must see Superseded, not a late Resolved", listOf("superseded"), outcomeA)
   }
+
+  @Test
+  fun `a resolver that ignores cancellation and then THROWS late is still only Superseded`() =
+    runTest {
+      val failures = mutableListOf<String>()
+      val threwLate = mutableListOf<String>()
+      var resumeA: Continuation<String>? = null
+      val slowGate = CompletableDeferred<String>()
+
+      val coordinator =
+        LatestLinkCoordinator<String>(
+          scope = TestScope(testScheduler),
+          resolve = { input ->
+            if (input == "A") {
+              try {
+                suspendCoroutine<String> { resumeA = it }
+              } catch (e: IllegalStateException) {
+                threwLate += "A"
+                throw e
+              }
+            } else {
+              slowGate.await()
+            }
+          },
+        )
+
+      val ticketA = coordinator.submit("A")
+      val outcomeA = mutableListOf<String>()
+      val a = launch {
+        when (ticketA.await()) {
+          is LinkRequestOutcome.Superseded -> outcomeA += "superseded"
+          is LinkRequestOutcome.Resolved -> outcomeA += "resolved"
+          is LinkRequestOutcome.Failed -> {
+            outcomeA += "failed"
+            failures += "A"
+          }
+        }
+      }
+      testScheduler.advanceTimeBy(100)
+
+      coordinator.submit("B")
+      slowGate.complete("B")
+      testScheduler.advanceUntilIdle()
+
+      resumeA!!.resumeWithException(IllegalStateException("late failure from a superseded request"))
+      testScheduler.advanceUntilIdle()
+      a.join()
+
+      assertEquals("the test is worthless unless A really did throw late", listOf("A"), threwLate)
+      assertEquals("a superseded request reports Superseded, never Failed", listOf("superseded"), outcomeA)
+      assertEquals("and raises no user-facing failure", emptyList<String>(), failures)
+    }
 
   // --- 3. cancellation is never a user-facing failure --------------------------------------------
 
@@ -288,7 +362,7 @@ class LatestLinkCoordinatorTest {
   // --- 6. the settle window ----------------------------------------------------------------------
 
   @Test
-  fun `an isolated request delivers after the settle window`() = runTest {
+  fun `OPTIONAL MECHANISM - an isolated request delivers after a non-default settle window`() = runTest {
     val h = Harness(TestScope(testScheduler), settleWindowMillis = 500L)
     val a = h.submit("A")
     h.resolveNow("A") // resolves immediately; the window has not elapsed
@@ -302,7 +376,7 @@ class LatestLinkCoordinatorTest {
   }
 
   @Test
-  fun `a second tap inside the window suppresses the first entirely`() = runTest {
+  fun `OPTIONAL MECHANISM - a second tap inside a non-default window suppresses the first`() = runTest {
     // The case arbitration alone provably cannot fix: without the window, A would already have
     // launched before B existed, and no token can undo a launch that has happened.
     val h = Harness(TestScope(testScheduler), settleWindowMillis = 500L)
@@ -319,7 +393,7 @@ class LatestLinkCoordinatorTest {
   }
 
   @Test
-  fun `two taps beyond the window are two separate actions`() = runTest {
+  fun `OPTIONAL MECHANISM - two taps beyond a non-default window are two separate actions`() = runTest {
     val h = Harness(TestScope(testScheduler), settleWindowMillis = 500L)
     h.submit("A")
     h.resolveNow("A")
@@ -333,7 +407,7 @@ class LatestLinkCoordinatorTest {
   }
 
   @Test
-  fun `the settle window is absorbed when resolving takes longer`() = runTest {
+  fun `OPTIONAL MECHANISM - a non-default window is absorbed when resolving takes longer`() = runTest {
     val h = Harness(TestScope(testScheduler), settleWindowMillis = 500L)
     h.submit("A")
     // Resolve returns at 900ms, well past the window, so the window adds no delay of its own.
