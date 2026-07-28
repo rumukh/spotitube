@@ -8,6 +8,8 @@ import com.example.spotitube.core.YouTubeMusic
 import com.example.spotitube.core.YouTubeMusicSearch
 import com.example.spotitube.core.YouTubeSong
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -22,6 +24,9 @@ class InnerTubeMusicSearch : YouTubeMusicSearch {
   override suspend fun searchSongs(query: String): List<YouTubeSong> =
     withContext(Dispatchers.IO) {
       if (query.isBlank()) return@withContext emptyList()
+      // Blocking IO is not interrupted by cancellation. Checking here means a superseded request
+      // does not spend the user's data on a search whose answer can no longer be used.
+      currentCoroutineContext().ensureActive()
       val response = runCatching { Http.postJson(ENDPOINT, requestBody(query), HEADERS, YOUTUBE_HOSTS) }.getOrNull()
         ?: return@withContext emptyList()
       if (!response.isSuccessful) return@withContext emptyList()

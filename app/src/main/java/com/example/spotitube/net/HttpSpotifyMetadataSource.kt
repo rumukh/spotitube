@@ -11,6 +11,8 @@ import com.example.spotitube.core.SpotifyTrackMeta
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 /**
@@ -64,6 +66,7 @@ class HttpSpotifyMetadataSource(
   override suspend fun expandShortLink(link: SpotifyLink): SpotifyLink? =
     withContext(Dispatchers.IO) {
       for (agent in SHORT_LINK_USER_AGENTS) {
+        currentCoroutineContext().ensureActive()
         val finalUrl =
           runCatching {
             Http.resolveFinalUrl(
@@ -111,10 +114,13 @@ class HttpSpotifyMetadataSource(
       }
     }
 
-  private fun fetchEmbed(link: SpotifyLink): SpotifyTrackMeta? {
+  private suspend fun fetchEmbed(link: SpotifyLink): SpotifyTrackMeta? {
     val id = link.id ?: return null
     val url = "https://open.spotify.com/embed/track/$id"
     for (userAgent in userAgents) {
+      // Blocking IO is not interrupted by cancellation, so without this a superseded request keeps
+      // spending the user's battery and data working through every remaining User-Agent.
+      currentCoroutineContext().ensureActive()
       val response = runCatching { Http.get(url, headersFor(userAgent), SPOTIFY_HOSTS) }.getOrNull() ?: continue
       if (!response.isSuccessful) continue
       SpotifyEmbedParser.parse(response.body)?.let { return it }
@@ -122,8 +128,9 @@ class HttpSpotifyMetadataSource(
     return null
   }
 
-  private fun fetchOpenGraph(link: SpotifyLink): SpotifyTrackMeta? {
+  private suspend fun fetchOpenGraph(link: SpotifyLink): SpotifyTrackMeta? {
     for (userAgent in userAgents) {
+      currentCoroutineContext().ensureActive()
       val response =
         runCatching { Http.get(link.canonicalUrl, headersFor(userAgent), SPOTIFY_HOSTS) }.getOrNull() ?: continue
       if (!response.isSuccessful) continue
@@ -133,7 +140,8 @@ class HttpSpotifyMetadataSource(
     return null
   }
 
-  private fun oEmbedTitle(link: SpotifyLink): String? {
+  private suspend fun oEmbedTitle(link: SpotifyLink): String? {
+    currentCoroutineContext().ensureActive()
     val url = "https://open.spotify.com/oembed?url=" +
       java.net.URLEncoder.encode(link.canonicalUrl, "UTF-8")
     val response = runCatching { Http.get(url, headersFor(userAgents.first()), SPOTIFY_HOSTS) }.getOrNull()
