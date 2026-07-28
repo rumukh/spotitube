@@ -284,7 +284,7 @@ Keep this honest; several claims here were overclaimed at some point and had to 
 | Share-sheet path end-to-end, album bounce into the real Spotify app | **Measured** on hardware — external `ACTION_SEND` resolves and plays, confirmed twice via MediaSession, including with the link embedded in surrounding prose. Note the caveat above: this is reachability-limited, not reliability-limited. |
 | No user text, URL or query reaches logcat | **Measured** on hardware, not just source-reviewed: no `uri=` on `RESULT`, no `query=` on `SEARCH`, `INPUT … link=none (no Spotify link in 50 chars)`, and no message text anywhere in a demonstrably live logcat. Three-way correlation still works without `uri=` — the watch URL is reconstructed from the `videoId` and cross-checked against public oEmbed and MediaSession. |
 | `Http.resolveFinalUrl` throwing on redirect-budget exhaustion | **Unexercised, and expected to stay so** — not "untested so far". No live multi-hop chain exists to feed it: `spotify.link` is historical (see below) and canonical URLs do not redirect. The behaviour is accepted by inspection; do not open a task to test it. |
-| A **live `spotify.link` short code** expanding to canonical | **Never exercised, anywhere.** Every test uses an invented code, which only reaches Branch's unknown-code landing page. The user could not produce a short link at all — desktop Chrome and the mobile Spotify app both now yield canonical `open.spotify.com/track/…?si=…` — so the path looks largely historical and no real code was mintable to test with. The **degraded** path *is* runtime-verified: an unresolvable short link produced zero `market://` or `com.android.vending` references and landed in Spotify, so the Play Store trap is closed. |
+| A **live `spotify.link` short code** expanding to canonical | **Structurally unsupported, not merely unverified.** `Http.resolveFinalUrl` follows only `3xx` + `Location` and never reads the body; Branch never offers that. Measured across all three UA shapes: the app UA and `facebookexternalhit/1.1` both return `200` with no `Location` (the body does `location.replace("market://details?id=com.spotify.music")`), and a mobile-browser UA returns the only `3xx` on offer — an `intent://…` URL we correctly refuse. **Adding another User-Agent cannot help.** The degraded path *is* runtime-verified: an unresolvable short link produced zero `market://` or `com.android.vending` references and landed in Spotify. Caveat: every measurement used an invalid code, because current Spotify emits canonical `open.spotify.com/…?si=…` from both desktop and mobile and no valid code is obtainable. |
 
 `connectedAndroidTest` is **parser / network / target-selection evidence only**. It proves the
 intent was constructed, never that anything played. Do not cite it for playback.
@@ -508,14 +508,23 @@ Location: intent://open?link_click_id=…#Intent;scheme=spotify;package=com.spot
 `MalformedURLException`. Follow redirects **manually**, reject any non-http/https scheme, and pin a
 non-browser UA (`Spotitube/1.0 (+Android)`).
 
-> **Do not test this with an invented code.** An invalid code returns Branch's unknown-code landing
-> page — `200`, no redirect — which looks exactly like "this UA doesn't work" and will lead you to
-> false conclusions in both directions. A real code has to be minted from Spotify's share sheet.
+> **Do not test this with an invented code, and do not try to fix it with another User-Agent.**
+> An invalid code returns Branch's unknown-code landing page — `200`, no redirect — which looks
+> exactly like "this UA doesn't work" and will lead you to false conclusions in both directions.
 >
-> **And you probably cannot mint one.** As of 2026-07-28 neither desktop Chrome nor the mobile
-> Spotify app would produce a `spotify.link` URL — both now share canonical
+> More importantly, **expansion is structurally impossible for a `3xx`-following client.** Measured
+> across all three UA shapes: the app UA and `facebookexternalhit/1.1` both return `200` with no
+> `Location`, and the body's only action is
+> `window.top.location.replace("market://details?id=com.spotify.music")`; a mobile-browser UA
+> returns a `307` whose `Location` is the `intent://` URL above. The hop is JavaScript or an Android
+> intent, never an HTTP redirect. The only mechanism that could work is parsing the body, which is
+> deliberately out of scope. `facebookexternalhit` was in the retry list and was **deleted after
+> measurement** for exactly this reason.
+>
+> **And you probably cannot mint a code anyway.** As of 2026-07-28 neither desktop Chrome nor the
+> mobile Spotify app would produce a `spotify.link` URL — both now share canonical
 > `open.spotify.com/track/…?si=…`. Treat this whole path as historical: keep the handling, do not
-> spend time hunting for a code to test it with.
+> spend time on it.
 
 That `S.browser_fallback_url` matters for the failure path: if expansion fails and you hand the
 original Branch link to a browser while Spotify is **not** installed, the user lands on the Play

@@ -32,17 +32,37 @@ class HttpSpotifyMetadataSource(
   private val userAgents: List<String> = DEFAULT_USER_AGENTS,
 ) : SpotifyMetadataSource {
 
+  /**
+   * Follows a `spotify.link` short URL to a canonical one — which, measured, it cannot actually do.
+   *
+   * **Expansion is structurally unsupported by this resolver, not merely unverified.** [Http] only
+   * follows HTTP `3xx` with a `Location` header; it never reads the body. Branch never offers that:
+   *
+   * * `Spotitube/1.0 (+Android)` → `200`, no `Location`. The body is JavaScript whose only action is
+   *   `window.top.location.replace("market://details?id=com.spotify.music")`.
+   * * `facebookexternalhit/1.1` → `200`, no `Location`. A Branch landing page carrying
+   *   `al:android:url = spotify://open?…`, with no canonical URL anywhere in it.
+   * * a mobile-browser UA → `307`, and the only `3xx` on offer is
+   *   `intent://…;package=com.spotify.music;S.browser_fallback_url=market://…`, a non-HTTP scheme we
+   *   are right to refuse.
+   *
+   * So the hop is JavaScript or an Android intent, never a redirect we can follow. **Adding another
+   * User-Agent cannot help** — that has been tried and measured across all three shapes above. The
+   * only mechanism that could work is parsing the body, which is deliberately out of scope.
+   *
+   * The attempt is kept because it costs one request on a path that is already failing, and because
+   * it is what routes an unresolvable short link into the safe degradation rather than to a browser.
+   * Note what Branch wants for a non-browser client: `market://details?id=com.spotify.music`, and
+   * `browser_fallback_url` pointing at the Play Store too. Branch is actively trying to send the
+   * user to install Spotify, which is exactly why an unresolved short link is never handed to a
+   * browser.
+   *
+   * Honest limit: every measurement used an **invalid** code, because no valid one is obtainable —
+   * current Spotify emits canonical `open.spotify.com/…?si=…` from both desktop and mobile. A valid
+   * code might behave differently, but the mechanism is clearly JS/intent-based either way.
+   */
   override suspend fun expandShortLink(link: SpotifyLink): SpotifyLink? =
     withContext(Dispatchers.IO) {
-      // Try the app's own User-Agent first: a mobile-browser UA makes spotify.link answer with
-      // `intent://…;scheme=spotify;package=com.spotify.music`, which is not a URL we can follow,
-      // and a desktop UA has been seen stopping on a Branch landing page.
-      //
-      // But UA is the variable here, and failing to expand has a genuinely bad consequence: we
-      // hand the original Branch link to a browser, and for a user without Spotify installed
-      // Branch's own `browser_fallback_url` lands them on the Play Store being asked to install
-      // Spotify — the exact opposite of this app's purpose, delivered to the user who most needs
-      // it to work. So try the other agents too before giving up.
       for (agent in SHORT_LINK_USER_AGENTS) {
         val finalUrl =
           runCatching {
@@ -141,20 +161,20 @@ class HttpSpotifyMetadataSource(
     private const val SHORT_LINK_MAX_HOPS = 4
 
     /**
-     * Agents tried in order when expanding a short link.
+     * Agents tried when expanding a short link — now exactly one.
      *
-     * Browser UAs are excluded deliberately: they make Branch answer with an `intent://` redirect
-     * we cannot follow. [APP_USER_AGENT] is the one observed to walk through to a canonical
-     * address.
+     * `facebookexternalhit/1.1` was here as a second attempt and has been **deleted after
+     * measurement**, not on suspicion: it returns `200` with no `Location`, identically to
+     * [APP_USER_AGENT], so it retried a mechanism that cannot work rather than adding redundancy.
+     * See [expandShortLink] for the full measurement across all three UA shapes.
      *
-     * UNVERIFIED: `facebookexternalhit/1.1` is a second attempt rather than a proven fallback.
-     * Branch is known to serve unfurl bots a preview/landing page, which would make it decorative —
-     * it would return 200 with no redirect and contribute nothing. It costs one extra request only
-     * on a path that has already failed, so it stays until measured against a real short code; if
-     * that measurement shows it never reaches canonical, delete it rather than keep a fallback that
-     * only looks like redundancy.
+     * Browser UAs are excluded and must stay excluded: they are the one shape that *does* answer
+     * `3xx`, but with an `intent://` URL we cannot follow. `ShortLinkUserAgentTest` guards that.
+     *
+     * **Do not add another agent here.** Expansion is not UA-limited; it is limited by Branch
+     * hopping via JavaScript or an Android intent rather than an HTTP redirect.
      */
-    internal val SHORT_LINK_USER_AGENTS = listOf(APP_USER_AGENT, "facebookexternalhit/1.1")
+    internal val SHORT_LINK_USER_AGENTS = listOf(APP_USER_AGENT)
 
     /**
      * A `spotify.link` short URL redirects wherever Spotify points it; refuse to follow it off

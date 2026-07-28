@@ -189,9 +189,12 @@ class LinkHandlerActivity : ComponentActivity() {
       }
       is ResolveOutcome.BounceToSpotify -> {
         // An unexpanded short link is the one case where the browser fallback actively harms the
-        // user: Branch answers a browser with `browser_fallback_url=market://details?id=…`, so
-        // someone without Spotify lands on a Play Store page asking them to install it — the exact
-        // opposite of why they installed this app. Doing nothing is more honest.
+        // user. This is not a guess about Branch's behaviour — it is measured: for a non-browser
+        // client Branch's body does `location.replace("market://details?id=com.spotify.music")`,
+        // and its intent carries `browser_fallback_url=market://details?id=com.spotify.music`.
+        // Branch is *actively trying* to send the user to install Spotify. Hand it to a browser and
+        // someone without Spotify lands on a Play Store page — the exact opposite of why they
+        // installed this app. Doing nothing is more honest.
         val unexpandedShortLink = outcome.type == SpotifyEntityType.SHORT_LINK
         if (unexpandedShortLink && !LaunchIntents.isInstalled(this, LaunchIntents.SPOTIFY_PACKAGE)) {
           // The most total of total failures: nothing was launched and nothing can be. Route it

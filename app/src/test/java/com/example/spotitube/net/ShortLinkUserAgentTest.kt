@@ -17,9 +17,12 @@ import org.junit.Test
  * The regression this catches is someone reordering or appending to the list without knowing that,
  * which would silently break short-link expansion for every user.
  *
- * The live counterpart — expanding a *real* short code end to end — cannot be written until we hold
- * a genuine `spotify.link` code minted from Spotify's share sheet; every code available to this
- * session was invented, and an invalid code exercises only Branch's unknown-code landing page.
+ * **These tests are not evidence that expansion works.** It does not, and cannot, through a
+ * `3xx`-following client: every non-browser UA measured returns `200` with no `Location`, because
+ * Branch hops via JavaScript (`location.replace("market://details?id=com.spotify.music")`) or an
+ * Android intent. A live end-to-end test is not merely unwritten, it is unwritable — and it could
+ * not be run either, since current Spotify emits canonical `open.spotify.com/…?si=…` from both
+ * desktop and mobile and will not mint a short code.
  */
 class ShortLinkUserAgentTest {
 
@@ -62,5 +65,19 @@ class ShortLinkUserAgentTest {
     val agents = HttpSpotifyMetadataSource.SHORT_LINK_USER_AGENTS
     assertTrue("at least one agent is required", agents.isNotEmpty())
     assertEquals("duplicate agents waste a request on an already-failed path", agents.size, agents.toSet().size)
+  }
+
+  @Test
+  fun `exactly one agent is tried, because a second cannot help`() {
+    assertEquals(
+      "Short-link expansion is not User-Agent-limited — it is limited by Branch hopping via " +
+        "JavaScript or an Android intent rather than an HTTP redirect, which a 3xx-following " +
+        "client cannot follow at all. Every non-browser UA measured returned 200 with no " +
+        "Location; facebookexternalhit/1.1 was removed for exactly that reason. A second agent " +
+        "adds a request to an already-failed path and no capability. If you are adding one, the " +
+        "thing you actually need is body parsing, which is deliberately out of scope.",
+      1,
+      HttpSpotifyMetadataSource.SHORT_LINK_USER_AGENTS.size,
+    )
   }
 }

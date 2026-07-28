@@ -57,7 +57,14 @@ internal object Http {
       allow,
     )
 
-  /** Follows redirects without downloading bodies; returns the final URL. */
+  /**
+   * Follows redirects without downloading bodies; returns the final URL.
+   *
+   * Only `3xx` with a `Location` header. The body is never read, which is why `spotify.link`
+   * expansion cannot work through this — Branch hops via JavaScript or an Android intent. The
+   * redirect-budget throw below is correct for genuine chains but is **not** reached on that path:
+   * there are zero redirects to consume, so it returns immediately.
+   */
   fun resolveFinalUrl(
     url: String,
     headers: Map<String, String> = emptyMap(),
