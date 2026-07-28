@@ -233,6 +233,33 @@ episodes are bounced straight back to Spotify.
 
 No API keys, no OAuth, no accounts. Three public endpoints only:
 
+### Evidence status — what is measured vs assumed
+
+Keep this honest; several claims here were overclaimed at some point and had to be walked back.
+
+| Claim | Status |
+| --- | --- |
+| YT Music **starts playing** from `music.youtube.com/watch?v=` + `setPackage` | **Measured** on a real vivo X300 Pro (YT Music 9.29.54): `dumpsys media_session` showed `state=PLAYING(3)`, correct metadata, and position advancing 898 ms → 26966 ms. A loaded-but-idle screen cannot advance position. |
+| `spotify:{type}:{id}` routes correctly for all 6 forwarded types | **Measured**, screenshot-verified against real Spotify 9.1.68.1888. |
+| Spotify declares an https VIEW filter for `open.spotify.com` | **Measured** via `dumpsys package com.spotify.music`. |
+| Explicit `setPackage` + https bypasses domain-verification filtering | **AOSP source only** (~99%, API 31–36): filtering sits under `pkgName == null && intent.hasWebURI()`. **Not** measured on vivo OriginOS. |
+| Share-sheet path end-to-end, album bounce into the real Spotify app | **Not yet measured on device.** The emulator has no Spotify, so every emulator "bounce" landed in Chrome. |
+
+`connectedAndroidTest` is **parser / network / target-selection evidence only**. It proves the
+intent was constructed, never that anything played. Do not cite it for playback.
+
+Two evidence traps that produced false conclusions here:
+
+* **`match` values prove nothing.** Spotify returns `0x208000` and YT Music `0x508000` for
+  *deliberate garbage* as readily as for valid input — Spotify declares a bare `spotify:` scheme
+  with no host/path, YT Music declares `music.youtube.com` with path `GLOB: .*`. So
+  `resolve-activity` only proves an app claims the scheme/host. Hence
+  `ActivityNotFoundException` fires **only when the app is absent** and is *not* a malformed-input
+  guard — validate ids yourself (`^[A-Za-z0-9_-]{11}$`, and exactly 22 base62).
+* **`am start -W` "Activity not started … brought to the front" is not a failure.** Spotify's main
+  activity is single-top, so 5 of 6 type probes printed that while working perfectly. Judging on
+  `am -W` alone gave a false negative on 5 of 6.
+
 * `GET https://open.spotify.com/embed/track/{id}` → `__NEXT_DATA__` JSON (structured artists,
   millisecond duration, explicit flag) — **no album**.
 * `GET https://open.spotify.com/track/{id}` → Open Graph `<meta>` tags — the only source of the

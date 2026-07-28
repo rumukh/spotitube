@@ -72,11 +72,19 @@ class LinkHandlerActivity : ComponentActivity() {
   }
 
   private fun handle(input: String?) {
-    Log.i(TAG, "INPUT action=${intent?.action} raw=${input?.take(300)}")
+    // Never log the raw input. On a SEND this is the friend's entire message, which can contain
+    // anything they wrote around the link, and logcat is readable by adb on the user's own phone.
+    // The parsed link is enough to debug with: it is the part we actually act on.
+    val parsed = SpotifyLinkParser.findIn(input)
+    Log.i(
+      TAG,
+      "INPUT action=${intent?.action} link=${parsed?.canonicalUrl ?: "none"}" +
+        (if (parsed == null && !input.isNullOrBlank()) " (no Spotify link in ${input.length} chars)" else ""),
+    )
 
     // Belt-and-braces: every launch we make targets an explicit package, so a cycle should be
     // impossible. If the same link keeps coming back anyway, hand it to a browser and stop.
-    val guardKey = SpotifyLinkParser.findIn(input)?.canonicalUrl ?: input.orEmpty()
+    val guardKey = parsed?.canonicalUrl ?: input.orEmpty()
     if (guardKey.isNotEmpty() && loopGuard.recordAndCheck(guardKey, System.currentTimeMillis())) {
       val report = LaunchIntents.open(this, guardKey, preferredPackage = null)
       Log.w(TAG, "RESULT outcome=LOOPGUARD $report")
