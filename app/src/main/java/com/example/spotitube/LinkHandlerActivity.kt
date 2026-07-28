@@ -21,8 +21,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.lifecycleScope
+import com.example.spotitube.core.LatestLinkCoordinator
+import com.example.spotitube.core.LinkRequestOutcome
 import com.example.spotitube.core.LoopGuard
-import com.example.spotitube.core.RequestArbiter
 import com.example.spotitube.core.ResolveOutcome
 import com.example.spotitube.core.SpotifyEntityType
 import com.example.spotitube.core.SpotifyLinkParser
@@ -34,6 +36,7 @@ import com.example.spotitube.theme.SpotitubeTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * The activity that actually does the work.
@@ -113,40 +116,46 @@ class LinkHandlerActivity : ComponentActivity() {
     // were a URL. There is also nothing to loop on without a link: we only ever launch parsed ones.
     val guardKey = parsed?.canonicalUrl
     if (guardKey != null && loopGuard.recordAndCheck(guardKey, System.currentTimeMillis())) {
+      // Invalidate central work FIRST, so an older resolve cannot launch after this escape hatch
+      // has already acted.
+      coordinator.supersedeAll()
       val report = LaunchIntents.open(this, guardKey, preferredPackage = null)
       Log.w(TAG, "RESULT outcome=LOOPGUARD $report")
       finish()
       return
     }
 
-    // Arbitration is PROCESS-scoped, not per-instance. Two different link URIs create two
-    // independent activity instances under `standard` launch mode, so instance fields could never
-    // arbitrate between them — measured on device, both launched and the older link won 3/3.
+    // Arbitration is PROCESS-scoped and the resolve job is NOT a child of this Activity: two
+    // different link URIs create two independent instances, and a lifecycle-tied job for the newest
+    // request would be killed when the superseded instance finishes.
     //
-    // The work also runs in an application-scoped coroutine rather than lifecycleScope: the
-    // superseded activity calls finish(), and a newer request tied to a lifecycle would be killed
-    // by the *previous* activity's scope cancellation.
-    arbiter.submit(
-      resolve = { resolver.resolve(input) },
-      onResult = { outcome ->
-        act(outcome)
-        finish()
-      },
-      onSuperseded = {
-        // A newer link is already being handled. Exit silently: no launch, no search, no toast,
-        // and nothing logged as a failure. This is not a RESULT line, so it can never be mistaken
-        // for an outcome.
-        Log.i(TAG, "SUPERSEDED link=${parsed?.canonicalUrl ?: "none"}")
-        finish()
-      },
-      onFailure = { error ->
-        // Log the class only. Throwable messages from the HTTP layer can embed the URL, and
-        // passing the Throwable itself would print message and stack into logcat.
-        Log.w(TAG, "Resolve failed (${error.javaClass.simpleName})")
-        act(ResolveOutcome.Unsupported(error.javaClass.simpleName))
-        finish()
-      },
-    )
+    // The Activity holds a ticket and awaits it. The coordinator never holds a reference back, so
+    // an Activity cannot be leaked into the process singleton.
+    val ticket = coordinator.submit(input)
+    lifecycleScope.launch {
+      when (val outcome = ticket.await()) {
+        is LinkRequestOutcome.Superseded -> {
+          // Exit silently: no launch, no search, no toast, nothing logged as a failure. Not a
+          // RESULT line, so it can never be mistaken for an outcome.
+          Log.i(TAG, "SUPERSEDED link=${parsed?.canonicalUrl ?: "none"}")
+          finish()
+        }
+        is LinkRequestOutcome.Resolved -> {
+          // Atomic: a resolve that completed moments before a newer submission must not act now.
+          coordinator.consumeIfCurrent(ticket) { act(outcome.value) }
+          finish()
+        }
+        is LinkRequestOutcome.Failed -> {
+          // Log the class only. Throwable messages from the HTTP layer can embed the URL, and
+          // passing the Throwable itself would print message and stack into logcat.
+          Log.w(TAG, "Resolve failed (${outcome.error.javaClass.simpleName})")
+          coordinator.consumeIfCurrent(ticket) {
+            act(ResolveOutcome.Unsupported(outcome.error.javaClass.simpleName))
+          }
+          finish()
+        }
+      }
+    }
   }
 
   private fun act(outcome: ResolveOutcome) {
@@ -287,9 +296,10 @@ class LinkHandlerActivity : ComponentActivity() {
      * instances, and a lifecycle-scoped job for the newest request would be killed when the
      * superseded activity finishes.
      */
-    private val arbiter =
-      RequestArbiter<ResolveOutcome>(
-        CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val coordinator =
+      LatestLinkCoordinator<ResolveOutcome>(
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
+        resolve = { resolver.resolve(it) },
       )
 
     /** Kept in one place so the UI and tests describe entity types identically. */
