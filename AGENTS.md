@@ -247,7 +247,7 @@ Keep this honest; several claims here were overclaimed at some point and had to 
 | YT Music **starts playing** from `music.youtube.com/watch?v=` + `setPackage` | **Measured** on a real vivo X300 Pro (YT Music 9.29.54): `dumpsys media_session` showed `state=PLAYING(3)`, correct metadata, and position advancing 898 ms → 26966 ms. A loaded-but-idle screen cannot advance position. |
 | `spotify:{type}:{id}` routes correctly for all 6 forwarded types | **Measured**, screenshot-verified against real Spotify 9.1.68.1888. |
 | Spotify declares an https VIEW filter for `open.spotify.com` | **Measured** via `dumpsys package com.spotify.music`. |
-| Explicit `setPackage` + https bypasses domain-verification filtering | **AOSP source only** (~99%, API 31–36): filtering sits under `pkgName == null && intent.hasWebURI()`. **Not** measured on vivo OriginOS. |
+| Explicit `setPackage` + https bypasses domain-verification filtering | **Measured** on real vivo OriginOS hardware at API 36: with `pm get-app-links com.spotify.music` reporting *Verification link handling allowed: false*, an explicit `setPackage` + canonical HTTPS intent still reached Spotify. Previously AOSP-source-only; this was the last big unmeasured claim. |
 | Share-sheet path end-to-end, album bounce into the real Spotify app | **Not yet measured on device.** The emulator has no Spotify, so every emulator "bounce" landed in Chrome. |
 
 `connectedAndroidTest` is **parser / network / target-selection evidence only**. It proves the
@@ -508,6 +508,24 @@ time. OriginOS applies its own log throttling with no warning.
 
 > On this device, **absence of logcat output is not evidence of failure.** Confirm against
 > `dumpsys media_session` or what is actually on screen before concluding anything is broken.
+> MediaSession is the authoritative signal; logcat is a convenience that this OEM can withdraw.
+
+### Signal and Telegram do not offer Share on a link
+
+Measured on the user's own phone: Signal silently copies a link on long-press, and Telegram offers
+only *Open / Open In-App / Copy Link*. **Neither exposes Android's share sheet on a link.**
+
+This inverts the obvious onboarding. `ACTION_SEND` needs no setup and cannot be taken away by domain
+verification, which makes it sound like the safe primary path — but in the apps the user's friends
+actually message them in, the affordance barely exists. Real usage order is:
+
+1. **Tapping** the link — needs the two-step domain handoff (see the assetlinks note above).
+2. **Copy → open Spotitube → tap** — the only zero-setup route that works in Signal today.
+3. **Share** — genuinely useful, but not primary.
+
+Onboarding leads with link handling accordingly, and the `INPUT` log line carries
+`source=view|share|clipboard|manual` because `ACTION_SEND` alone cannot tell an external share from
+our own in-app buttons.
 
 ### Gradle notes
 
