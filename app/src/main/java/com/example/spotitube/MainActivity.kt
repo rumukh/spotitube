@@ -43,6 +43,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
+import com.example.spotitube.core.LinkHandling
 import com.example.spotitube.core.ResolveOutcome
 import com.example.spotitube.core.SpotifyLinkParser
 import com.example.spotitube.theme.SpotitubeTheme
@@ -75,6 +76,8 @@ private fun HomeScreen() {
   val linkHandlingEnabled = remember { linkHandlingEnabled(context) }
   val ytMusicInstalled = remember { LaunchIntents.isInstalled(context, LaunchIntents.YT_MUSIC_PACKAGE) }
   val spotifyInstalled = remember { LaunchIntents.isInstalled(context, LaunchIntents.SPOTIFY_PACKAGE) }
+  val linkHandling =
+    remember(linkHandlingEnabled, spotifyInstalled) { LinkHandling.of(linkHandlingEnabled, spotifyInstalled) }
 
   Column(
     modifier = Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState()).padding(20.dp),
@@ -90,27 +93,50 @@ private fun HomeScreen() {
     Card(modifier = Modifier.fillMaxWidth()) {
       Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("Opening links automatically", style = MaterialTheme.typography.titleMedium)
-        when {
-          Build.VERSION.SDK_INT < Build.VERSION_CODES.S ->
+        when (linkHandling) {
+          LinkHandling.NOT_REPORTABLE ->
             Text(
               "On this Android version, tapping a Spotify link should offer Spotitube in the " +
                 "\"Open with\" list. Where it does not, sharing the link to Spotitube always works.",
               style = MaterialTheme.typography.bodySmall,
             )
-          linkHandlingEnabled == true ->
+          LinkHandling.ENABLED ->
             Text(
               "Enabled. Tapping a Spotify link opens Spotitube directly.",
               style = MaterialTheme.typography.bodySmall,
             )
-          else ->
+          LinkHandling.BLOCKED_BY_SPOTIFY ->
             Text(
-              "Android 12 and newer only let an app open web links automatically if it owns the " +
-                "website — and nobody but Spotify owns spotify.com. Tap below, turn on " +
-                "\"Open supported links\", and tick the Spotify addresses. Then link taps come here.",
+              "Spotify owns spotify.com, so Android has verified those links to the Spotify app " +
+                "and only one app can hold them. To let Spotitube take them you have to hand them " +
+                "over in two steps:\n\n" +
+                "1. In Spotify's settings, turn OFF \"Open supported links\".\n" +
+                "2. Come back to Spotitube's settings and turn ON \"Open supported links\", then " +
+                "tick the spotify.com addresses.\n\n" +
+                "If you would rather leave Spotify as it is, just share links to Spotitube instead " +
+                "— that always works and changes nothing.",
+              style = MaterialTheme.typography.bodySmall,
+            )
+          LinkHandling.AVAILABLE ->
+            Text(
+              "Android 12 and newer only open web links in an app automatically if that app owns " +
+                "the website, and we do not own spotify.com. Tap below, turn on " +
+                "\"Open supported links\", and tick the Spotify addresses.",
               style = MaterialTheme.typography.bodySmall,
             )
         }
-        Button(onClick = { openLinkSettings(context) }) { Text("Open link settings") }
+
+        if (linkHandling == LinkHandling.BLOCKED_BY_SPOTIFY) {
+          OutlinedButton(onClick = { openLinkSettings(context, LaunchIntents.SPOTIFY_PACKAGE) }) {
+            Text("1. Spotify's link settings")
+          }
+          Button(onClick = { openLinkSettings(context, context.packageName) }) {
+            Text("2. Spotitube's link settings")
+          }
+        } else {
+          Button(onClick = { openLinkSettings(context, context.packageName) }) { Text("Open link settings") }
+        }
+
         Text(
           "Either way, sharing always works: in any chat, use Share \u2192 Spotitube.",
           style = MaterialTheme.typography.bodySmall,
@@ -234,8 +260,9 @@ private fun linkHandlingEnabledS(context: Context): Boolean {
   }
 }
 
-private fun openLinkSettings(context: Context) {
-  val uri = "package:${context.packageName}".toUri()
+/** Opens the "Open by default" screen for [packageName] — ours, or Spotify's, for the handoff. */
+private fun openLinkSettings(context: Context, packageName: String) {
+  val uri = "package:$packageName".toUri()
   val intents =
     buildList {
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {

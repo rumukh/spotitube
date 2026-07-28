@@ -82,6 +82,8 @@ class SpotitubeResolver(
       val why =
         when {
           outcome.insufficientEvidence -> "title-only Spotify metadata: not enough to auto-play"
+          outcome.ambiguous ->
+            "two equally strong candidates from different releases and no Spotify album to choose between them"
           best == null -> "nothing ranked"
           best.vetoed -> "best candidate vetoed: ${best.vetoes.joinToString(",")}"
           else -> "best score %.2f below threshold %.2f".format(best.score, MatchScorer.CONFIDENCE_THRESHOLD)

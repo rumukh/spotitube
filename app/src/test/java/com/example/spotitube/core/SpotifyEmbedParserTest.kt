@@ -58,6 +58,39 @@ class SpotifyEmbedParserTest {
   }
 
   @Test
+  fun `playability diagnostics are captured but never gate playback`() {
+    val meta = SpotifyEmbedParser.parse(Fixtures.read(Fixtures.RICK_ASTLEY_EMBED_HTML))!!
+    assertEquals(true, meta.isPlayable)
+    assertEquals("PLAYABLE", meta.playabilityReason)
+
+    // A track Spotify will not play in this market is exactly the case this app exists for, so an
+    // unplayable flag must not stop us matching it on YouTube Music.
+    val restricted =
+      meta.copy(isPlayable = false, playabilityReason = "NOT_AVAILABLE_IN_MARKET", album = "Whenever You Need Somebody")
+    val candidate =
+      YouTubeSong(
+        videoId = "lYBUbBu4W08",
+        title = "Never Gonna Give You Up",
+        artists = listOf("Rick Astley"),
+        album = "Whenever You Need Somebody",
+        durationSeconds = 214,
+      )
+    assertTrue(MatchScorer.best(restricted, listOf(candidate)).confident)
+  }
+
+  @Test
+  fun `an album or episode embed is not parsed as a track`() {
+    val json =
+      """
+      <script id="__NEXT_DATA__" type="application/json">
+      {"props":{"pageProps":{"state":{"data":{"entity":
+        {"type":"album","name":"Whenever You Need Somebody","duration":0,"artists":[{"name":"Rick Astley"}]}}}}}}
+      </script>
+      """.trimIndent()
+    assertNull(SpotifyEmbedParser.parse(json))
+  }
+
+  @Test
   fun `malformed and missing payloads degrade to null`() {
     val inputs =
       listOf(

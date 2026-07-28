@@ -103,7 +103,9 @@ class LinkHandlerActivity : ComponentActivity() {
           TAG,
           "MATCH videoId=${outcome.videoId} score=${"%.3f".format(outcome.score)} " +
             "picked=\"${outcome.description}\" spotify=\"${outcome.spotify.display}\" " +
-            "spotifyDuration=${outcome.spotify.durationSeconds}",
+            "spotifyDuration=${outcome.spotify.durationSeconds} " +
+            "explicit=${outcome.spotify.isExplicit} playable=${outcome.spotify.isPlayable}" +
+            (outcome.spotify.playabilityReason?.let { " playabilityReason=$it" } ?: ""),
         )
         status = "Opening ${outcome.description}"
         val report = LaunchIntents.open(this, outcome.url, LaunchIntents.YT_MUSIC_PACKAGE)

@@ -180,9 +180,39 @@ class MatchScorerTest {
 
   @Test
   fun `multi artist track picks the official soundtrack upload`() {
-    val outcome = MatchScorer.best(sunflower, sunflowerCandidates())
+    val outcome = MatchScorer.best(sunflowerWithAlbum, sunflowerCandidates())
     assertTrue("expected confidence, got ${outcome.best?.explain()}", outcome.confident)
     assertEquals("r7Rn4ryE_w8", outcome.best!!.song.videoId)
+  }
+
+  @Test
+  fun `without a spotify album two different releases are ambiguous rather than a coin toss`() {
+    // Same live result set, but Spotify's canonical page failed so we have no album to arbitrate.
+    // The top two are the soundtrack upload and the Hollywood's Bleeding upload — same title, same
+    // artists, durations one second apart. Only YouTube's ordering separates them, so pick neither.
+    val outcome = MatchScorer.best(sunflower, sunflowerCandidates())
+    assertTrue("expected ambiguity, got ${outcome.best?.explain()}", outcome.ambiguous)
+    assertFalse(outcome.confident)
+    // The ranking is still produced; it just is not acted on.
+    assertEquals("r7Rn4ryE_w8", outcome.best!!.song.videoId)
+  }
+
+  @Test
+  fun `a deluxe reissue of the same album is not treated as a different release`() {
+    // Rick Astley's top two are the original and the 2022 remaster from the deluxe edition of the
+    // same album. Even with no Spotify album that is not a conflict — both are the same song.
+    val noAlbum = rickAstley.copy(album = null)
+    val outcome = MatchScorer.best(noAlbum, rickCandidates())
+    assertFalse("deluxe reissue must not read as ambiguous: ${outcome.best?.explain()}", outcome.ambiguous)
+    assertTrue(outcome.confident)
+    assertEquals("lYBUbBu4W08", outcome.best!!.song.videoId)
+  }
+
+  @Test
+  fun `ambiguity does not fire when the album resolves it`() {
+    val outcome = MatchScorer.best(sunflowerWithAlbum, sunflowerCandidates())
+    assertFalse(outcome.ambiguous)
+    assertTrue(outcome.confident)
   }
 
   @Test

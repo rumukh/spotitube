@@ -52,6 +52,10 @@ object SpotifyEmbedParser {
         ?: findTrackEntity(root, 0)
         ?: return null
 
+    // Guard against an album or episode embed being parsed as a track.
+    val type = entity.str("type")
+    if (type != null && type != "track") return null
+
     val title = (entity.str("name") ?: entity.str("title"))?.trim().orEmpty()
     if (title.isEmpty()) return null
 
@@ -69,7 +73,9 @@ object SpotifyEmbedParser {
       durationMillis = durationMillis,
       releaseYear = releaseYear(entity),
       isExplicit = entity.obj("isExplicit").bool(),
-      ogType = entity.str("type")?.let { if (it == "track") "music.song" else it },
+      isPlayable = entity.obj("isPlayable").bool(),
+      playabilityReason = entity.str("playabilityReason")?.takeIf { it.isNotBlank() },
+      ogType = type?.let { if (it == "track") "music.song" else it },
     )
   }
 

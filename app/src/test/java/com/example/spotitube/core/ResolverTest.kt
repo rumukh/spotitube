@@ -180,6 +180,30 @@ class ResolverTest {
   }
 
   @Test
+  fun `an unresolvable release choice opens search rather than guessing`() = runTest {
+    // Spotify page degraded to no album; YouTube offers two equally strong but different releases.
+    val spotify =
+      object : SpotifyMetadataSource {
+        override suspend fun expandShortLink(link: SpotifyLink): SpotifyLink? = null
+
+        override suspend fun fetchTrack(link: SpotifyLink) =
+          SpotifyTrackMeta(
+            title = "Sunflower - Spider-Man: Into the Spider-Verse",
+            artists = listOf("Post Malone", "Swae Lee"),
+            durationSeconds = 158,
+          )
+      }
+    val youTube =
+      object : YouTubeMusicSearch {
+        override suspend fun searchSongs(query: String) =
+          InnerTubeParser.parseSongs(Fixtures.read(Fixtures.SUNFLOWER_SEARCH_JSON))
+      }
+    val outcome = SpotitubeResolver(spotify, youTube).resolve("https://open.spotify.com/track/3KkXRkHbMCARz0aVfEt68P")
+    val search = outcome as? ResolveOutcome.SearchOnYouTubeMusic ?: error("expected search, got $outcome")
+    assertTrue(search.reason, search.reason.contains("different releases"))
+  }
+
+  @Test
   fun `garbage input is unsupported`() = runTest {
     val resolver = SpotitubeResolver(FakeSpotify(), FakeYouTube())
     for (input in listOf(null, "", "just some words", "https://youtube.com/watch?v=abc")) {

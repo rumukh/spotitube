@@ -37,6 +37,12 @@ data class MatchOutcome(
    * original from a cover, so auto-play is refused however well a candidate scores.
    */
   val insufficientEvidence: Boolean = false,
+  /**
+   * True when the top two candidates are separated by nothing but YouTube's own ordering *and*
+   * they come from clearly different releases, with no Spotify album to arbitrate. Picking
+   * `result[0]` there would be a coin toss dressed up as a decision.
+   */
+  val ambiguous: Boolean = false,
 )
 
 /**
@@ -88,6 +94,12 @@ object MatchScorer {
 
   private const val EXPLICIT_AGREE_BONUS = 0.02
   private const val EXPLICIT_DISAGREE_PENALTY = 0.06
+
+  /**
+   * Score gap below which two candidates are "equally strong". Equal to the rank prior, so it means
+   * literally "nothing but YouTube's ordering separates these".
+   */
+  private const val AMBIGUITY_MARGIN = 0.02
 
   /** Unknown duration is neither evidence for nor against; slightly pessimistic. */
   private const val UNKNOWN_DURATION_SCORE = 0.45
@@ -241,13 +253,35 @@ object MatchScorer {
     val ranked =
       candidates.map { score(spotify, it) }.sortedWith(compareByDescending<ScoredMatch> { it.score }.thenBy { it.song.position })
     val top = ranked.firstOrNull()
-    val confident = top != null && !top.vetoed && top.score >= CONFIDENCE_THRESHOLD && !insufficientEvidence
+    val runnerUp = ranked.getOrNull(1)?.takeIf { !it.vetoed }
+
+    // Spotify's canonical page intermittently returns a JavaScript shell, which costs us the album.
+    // Without it, two uploads of the same title and duration on *different* releases are separated
+    // by nothing but YouTube's ranking prior — that is a coin toss, so hand the user the results.
+    val ambiguous =
+      top != null &&
+        !top.vetoed &&
+        runnerUp != null &&
+        top.score - runnerUp.score <= AMBIGUITY_MARGIN &&
+        top.albumScore == 0.0 &&
+        runnerUp.albumScore == 0.0 &&
+        albumsClearlyDiffer(top.song.album, runnerUp.song.album)
+
+    val confident =
+      top != null && !top.vetoed && top.score >= CONFIDENCE_THRESHOLD && !insufficientEvidence && !ambiguous
     return MatchOutcome(
       best = top,
       confident = confident,
       ranked = ranked,
       insufficientEvidence = insufficientEvidence,
+      ambiguous = ambiguous,
     )
+  }
+
+  /** Only "different release", not "slightly different edition" — a deluxe reissue is not a conflict. */
+  private fun albumsClearlyDiffer(a: String?, b: String?): Boolean {
+    if (a == null || b == null) return false
+    return TextNormalizer.similarity(a, b) < 0.5
   }
 
   private fun durationScore(delta: Int?): Double =

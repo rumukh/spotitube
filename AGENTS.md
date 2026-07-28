@@ -367,6 +367,20 @@ they still appear under *Selection state* and can be enabled from
 `Settings.ACTION_APP_OPEN_BY_DEFAULT_SETTINGS`. That is the right value for a domain you do
 not own, and it clears lint's `AppLinkWarning`.
 
+> **But Spotify owns the domain.** `https://open.spotify.com/.well-known/assetlinks.json`
+> (and the same file on `spotify.link` and `spotify.app.link`) delegates
+> `delegate_permission/common.handle_all_urls` to `com.spotify.music`, plus the Lite, canary,
+> debug and TV variants. On Android 12+ that makes those domains **verified** to Spotify, and
+> a domain can be held by only one app. So on any phone with Spotify installed, sending the
+> user to *our* "Open by default" screen is not enough — they must turn **Spotify's** "Open
+> supported links" off first, then enable ours. Spotitube detects this
+> (`LinkHandling.BLOCKED_BY_SPOTIFY`) and shows a two-step handoff with a deep link into
+> Spotify's own settings via `ACTION_APP_OPEN_BY_DEFAULT_SETTINGS` +
+> `package:com.spotify.music`. The `ACTION_SEND` share target is unaffected by any of this.
+>
+> The emulator has no Spotify, so it always shows the one-step `AVAILABLE` branch; the
+> decision itself lives in `core/LinkHandling.kt` and is unit-tested.
+
 ### Spotify metadata: two endpoints, neither sufficient alone
 
 `GET https://open.spotify.com/embed/track/{id}` (~10 KB) serves a

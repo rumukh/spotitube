@@ -13,6 +13,9 @@ data class SpotifyTrackMeta(
   val durationMillis: Int? = null,
   /** `null` when the source did not tell us. */
   val isExplicit: Boolean? = null,
+  /** Spotify's own playability for this market. Logged as a diagnostic; never gates playback. */
+  val isPlayable: Boolean? = null,
+  val playabilityReason: String? = null,
 ) {
   val artistLine: String
     get() = artists.joinToString(", ")
@@ -44,6 +47,8 @@ data class SpotifyTrackMeta(
       ogType = ogType ?: other.ogType,
       durationMillis = durationMillis ?: other.durationMillis,
       isExplicit = isExplicit ?: other.isExplicit,
+      isPlayable = isPlayable ?: other.isPlayable,
+      playabilityReason = playabilityReason ?: other.playabilityReason,
     )
   }
 }
