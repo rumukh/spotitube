@@ -251,6 +251,31 @@ Settled decisions, each verifiable rather than taken on trust:
 * **There is no fourth session.** Unexplained rebuilds and icon edits were the coordinator
   working in the same tree.
 
+Settled **implementation** decisions, recorded here for the same reason — these three were
+each re-litigated across several rounds of dropped messages:
+
+* **The settle window is ON at 1,000 ms** (`56edd56`), not zero. Arbitration alone handles
+  every spacing that has been *measured*, and a zero-window test pins that at 0–800 ms so the
+  concurrency suite can never pass merely because a timer masked a race. The window exists for
+  what arbitration provably cannot reach: latest-wins can only suppress an older request once a
+  newer one **exists**, so a resolve that completed and launched at 400 ms is beyond any token.
+  That case is ordinary rather than exotic, because the loop guard deliberately permits a
+  same-link double tap and trips only on the third hit. Note the cost honestly: the wait is
+  `max(resolve, window)`, free at the ~0.8–1.3 s measured device latency but a real regression
+  on a warm 400 ms connection. **The boundary is `[0, 1000]` — inclusive at the top**; 999 and
+  1000 both coalesce, 1001 separates. That was measured, and a confident derivation predicted
+  it backwards, so verify rather than reason if you change the constant.
+* **Album corroborates, never contradicts** (`68e9dbf`). A disagreeing album may not push a
+  candidate below the confidence threshold; it may only fail to lift it. Measured on four real
+  tracks, album scored 0.00 for **three of four correct matches**, and rejected no wrong one —
+  covers go to the artist veto, live/remix/instrumental to the variant veto, re-records to the
+  duration veto. It keeps full strength in `rank`, which is the job it is actually good at.
+* **The romanisation rule cannot be extended to the album field.** It needs
+  `<non-Latin head> - <Latin suffix>` in one string; YouTube supplies only the romanised form
+  for albums, with no original to pair against. Measured at 0.00 — it never fires. Fixing it
+  needs real transliteration, and that still would not resolve ラブストーリー → "Love Story",
+  which is back-translation. Do not attempt it.
+
 ### `git commit --only`, always
 
 The index is shared state in one working tree. A concurrent `git add` between your `git add`
