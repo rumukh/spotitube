@@ -68,6 +68,25 @@ class LiveNetworkTest {
   fun shortLinkFormatIsRejectedCleanlyWhenItCannotBeExpanded() = runBlocking {
     // A made-up short code: the point is that a dead short link degrades to a Spotify bounce
     // rather than throwing or searching YouTube for nothing.
+    //
+    // ⚠ THIS TEST READS AS SHORT-LINK COVERAGE AND IS NOT.
+    //
+    // It asserts only the DEGRADED path. The happy path — a real code expanding to canonical — is
+    // exercised NOWHERE in this project. So short-link support could be completely broken and this
+    // suite would stay green, because a broken expander produces exactly the bounce asserted here.
+    // That is a test-suite defect, not a missing test, and it is recorded as such in the AGENTS.md
+    // evidence table.
+    //
+    // It stays unwritten deliberately rather than faked: an invented code only reaches Branch's
+    // unknown-code landing page, which looks identical to "the expander is broken", so a test built
+    // on one would assert a false conclusion in either direction. As of 2026-07-28 neither desktop
+    // Chrome nor the mobile Spotify app will mint a `spotify.link` at all — both now share canonical
+    // `open.spotify.com/track/…?si=…` — so the path is largely historical and no real code was
+    // obtainable. Do not go hunting for one; that is a documented dead end.
+    //
+    // The part that IS determinable offline is covered by ShortLinkUserAgentTest, which asserts no
+    // browser-shaped User-Agent can enter the short-link list — Branch answers those with an
+    // `intent://` redirect that cannot be followed.
     val outcome = SpotitubeResolver(spotify, youTube).resolve("https://spotify.link/zzzzzzzzzzz")
     assertTrue("got $outcome", outcome is ResolveOutcome.BounceToSpotify)
   }
