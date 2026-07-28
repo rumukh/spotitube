@@ -257,6 +257,71 @@ The index is shared state in one working tree. A concurrent `git add` between yo
 and your `git commit` means your commit takes their files too — this happened twice, in both
 directions. Explicit staging does **not** protect you; `git commit --only <paths>` does.
 
+> `--only` cannot stage a **new** file. For those, `git add <explicit paths>` first, then
+> `git commit --only <the same explicit paths>`. Never a bare `git add -A`.
+
+### Never state another session's HEAD from a message; read it from git
+
+Cross-session messages arrive **minutes late and out of order**, and replies routinely cross.
+On 2026-07-29 all three sessions independently accused each other of stale baselines, and every
+one of those accusations was itself stale by the time it arrived. Two rounds were also spent
+disputing a test count (11 vs 12 vs 16) that no one had measured — `(Select-String '@Test').Count`
+settled it in seconds, and the answer was in none of the messages.
+
+Before asserting anything about the repository:
+
+```powershell
+git fetch origin; git rev-parse --short origin/master     # not what a message said
+git show <sha>:<path> | Select-String <pattern>           # not the working tree
+```
+
+`git show <sha>:<path>` is the strong form and the one to prefer: the working tree can contain a
+fix that was never committed, and a pinned artifact must be attributable to a commit rather than
+to a directory. It is how the `owner`-in-companion bug was confirmed fixed.
+
+> **The rule that would have saved the most time: a directive is not landed until you have read it
+> back off disk.** A settle-window constant was relayed as corrected three times over ninety
+> minutes and committed wrong anyway; only `Select-String` on the file ever revealed it. If a
+> directive fails to land twice, stop relaying and make the edit yourself.
+
+### A green test proves nothing until you have watched it go red
+
+Four tests in this repo named exactly the right property and proved nothing, each differently:
+
+1. **A scenario that never occurred.** A concurrency test resolved request A *before* submitting B,
+   so only a timer could pass it — and its comment then asserted arbitration *could not* fix the
+   800 ms case. That claim was false, and it was the entire argument for a settle window.
+2. **A suspension that could not fail.** `withContext(NonCancellable) { … }` protects the block but
+   prompt-cancels on **exit** into a cancelled parent, so the resolver never returned and the guard
+   under test never ran.
+3. **A fixture more correct than production.** Each simulated owner built its own
+   `OwnerGeneration`, which is the right design — while production shared one. The tests measured
+   the intended shape, not the built one.
+4. **A property asserted only at its boundary.** `a mismatched album never rejects an otherwise
+   good match` used a *perfect* title, where the penalty lands exactly on the threshold. At title
+   0.800 the property was false, and had been since it was written.
+
+Two habits catch all four, and both are now used here:
+
+* **Assert the scenario happened**, not just the outcome — e.g.
+  `assertEquals("the test is worthless unless A really did return late", listOf("A"), returnedLate)`.
+* **Reproduce the defect with the fix removed.** `without the guard the same sequence loses B
+  entirely` and `ownerIsNotSharedBetweenInstances` were both *falsified* before being trusted.
+
+Encode a finding where the build enforces it rather than where a reader must notice it. The
+short-link User-Agent list is pinned by a test whose failure message *is* the finding; the CJK
+fixtures carry `assertNotNull(meta.album)` so an embed-only capture cannot silently re-enter the
+forgiving branch.
+
+### Test fixtures must be assembled the way production assembles them
+
+Stronger than "don't author both sides of a fixture", and the reason that weaker rule failed here:
+the Japanese fixtures were **genuine captures** — of the embed endpoint only. The embed carries no
+album, so `albumKnown = false` and the tests took `MatchScorer`'s renormalised branch while the app,
+which merges the canonical page, took the strict one. Green tests, failing phone, nothing fake
+anywhere. **Capturing only the endpoint that is convenient to parse is the same class of error as
+inventing the data.**
+
 ---
 
 ## 7. Spotitube — what this app is and how to run it
