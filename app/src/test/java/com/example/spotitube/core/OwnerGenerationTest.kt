@@ -171,4 +171,38 @@ class OwnerGenerationTest {
     assertFalse("A is no longer current once B claims the owner", owner.isCurrent(a))
     assertTrue(owner.isCurrent(b))
   }
+
+  @Test
+  fun `ownerIsNotSharedBetweenInstances - the owner field must not live in the companion object`() {
+    // A STRUCTURAL assertion, and it exists because no behavioural test can catch this.
+    //
+    // `owner` was first written into the companion object, making it a process-wide singleton while
+    // its comment claimed the opposite. Every test above still passed: they construct one
+    // OwnerGeneration per SimulatedOwner, which is the correct design rather than whatever
+    // production wires. The tests were measuring the intended shape, not the built one.
+    //
+    // The live consequence was a stranded window: with a shared counter, a newer INSTANCE advances
+    // the generation, so the superseded instance's callback finds itself stale and refuses to
+    // finish() -- leaving a translucent handler on screen with nothing left to close it.
+    //
+    // Reading the source is crude, but the defect is a matter of WHERE a field is declared, and
+    // that is exactly what this checks. Reflection cannot: loading an Android Activity class in a
+    // JVM unit test needs instrumentation this project deliberately does not carry.
+    val source =
+      java.io.File("src/main/java/com/example/spotitube/LinkHandlerActivity.kt")
+        .takeIf { it.exists() }
+        ?.readText()
+        ?: java.io.File("app/src/main/java/com/example/spotitube/LinkHandlerActivity.kt").readText()
+
+    val ownerDeclaration = source.indexOf("private val owner = OwnerGeneration()")
+    val companionStart = source.indexOf("companion object {")
+
+    assertTrue("the owner field must exist at all", ownerDeclaration >= 0)
+    assertTrue("the companion object must exist for this check to mean anything", companionStart >= 0)
+    assertTrue(
+      "owner is declared inside the companion object, so every Activity instance shares one " +
+        "counter; a superseded instance would then refuse to finish() and strand its window",
+      ownerDeclaration < companionStart,
+    )
+  }
 }

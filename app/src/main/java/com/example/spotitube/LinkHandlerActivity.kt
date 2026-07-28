@@ -54,6 +54,17 @@ class LinkHandlerActivity : ComponentActivity() {
 
   private var status by mutableStateOf("Looking up the track…")
 
+  /**
+   * INSTANCE field, deliberately outside the companion object, and the placement is the whole
+   * point: a shared counter would make a superseded instance refuse to `finish()` — because a newer
+   * *instance* would have advanced it — leaving a translucent handler window stranded on screen.
+   *
+   * Behavioural tests cannot catch that regression: they construct one [OwnerGeneration] per
+   * simulated owner, which is the correct design rather than whatever production happens to wire.
+   * `ownerIsNotSharedBetweenInstances` in OwnerGenerationTest asserts the placement instead.
+   */
+  private val owner = OwnerGeneration()
+
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     setContent { SpotitubeTheme { OverlayCard(status) } }
@@ -312,9 +323,6 @@ class LinkHandlerActivity : ComponentActivity() {
     }
 
     /** Shared across instances: the launch mode is `standard`, so every intent builds a new one. */
-  /** Guards this instance's own callbacks; see OwnerGeneration. Instance-scoped, NOT process. */
-  private val owner = OwnerGeneration()
-
     private val loopGuard = LoopGuard()
 
     /**
