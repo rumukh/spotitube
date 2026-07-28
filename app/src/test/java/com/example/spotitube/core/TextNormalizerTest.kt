@@ -154,6 +154,46 @@ class TextNormalizerTest {
   }
 
   @Test
+  fun `noise on either side does not block the romanisation rule`() {
+    // The seam the ordering exists for: ordinary noise is removed from BOTH sides before the shape
+    // is judged. Without that, "- Remastered" reads as an already-romanised suffix, the one-side
+    // rule blocks the special case, and the correct recording scored 0.400.
+    val romanised = "夜の踊り子 - Yoru No Odoriko"
+    val noisySpotifySides =
+      listOf(
+        "夜の踊り子 - Remastered",
+        "夜の踊り子 (feat. Someone)",
+        "夜の踊り子 (Official Audio)",
+        "夜の踊り子 - Remastered 2020",
+      )
+    for (spotify in noisySpotifySides) {
+      assertEquals(spotify, 1.0, TextNormalizer.similarity(spotify, romanised), 1e-9)
+      assertEquals("$spotify (reversed)", 1.0, TextNormalizer.similarity(romanised, spotify), 1e-9)
+    }
+  }
+
+  @Test
+  fun `noise on the romanised side does not block it either`() {
+    val noisyRomanised =
+      listOf(
+        "夜の踊り子 - Yoru No Odoriko (Official Audio)",
+        "夜の踊り子 - Yoru No Odoriko (feat. Someone)",
+      )
+    for (yt in noisyRomanised) {
+      assertEquals(yt, 1.0, TextNormalizer.similarity("夜の踊り子", yt), 1e-9)
+      assertEquals("$yt (reversed)", 1.0, TextNormalizer.similarity(yt, "夜の踊り子"), 1e-9)
+    }
+  }
+
+  @Test
+  fun `an identity-bearing suffix survives noise removal and still blocks`() {
+    // "- Part One" is not ordinary noise, so it survives step 1, stays part of the "entire other"
+    // side, and correctly blocks a match.
+    assertTrue(TextNormalizer.similarity("夜 - Part One", "夜 - Yoru") < 1.0)
+    assertTrue(TextNormalizer.similarity("夜 - Yoru", "夜 - Part One") < 1.0)
+  }
+
+  @Test
   fun `clock durations are parsed and junk is rejected`() {
     assertEquals(214, TextNormalizer.parseClockDuration("3:34"))
     assertEquals(158, TextNormalizer.parseClockDuration("2:38"))

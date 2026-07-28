@@ -114,48 +114,73 @@ object TextNormalizer {
   /**
    * Whether [suffix] looks like a transliteration rather than identity-bearing text.
    *
-   * Latin letters (including macrons — Yūki, Tōkyō — since those are Latin script) plus benign
-   * punctuation and spacing. **Digits are excluded deliberately**: `Part 1` and `Part 2` are the
+   * Latin letters (including macrons — Yūki, Tōkyō — since those are Latin script) plus a small
+   * punctuation allowlist. **Digits are excluded deliberately**: `Part 1` and `Part 2` are the
    * difference between two tracks, not a romanisation of either.
    */
   private fun isRomanisationSuffix(suffix: String): Boolean {
     var sawLatinLetter = false
     for (cp in codePoints(suffix)) {
-      if (Character.isDigit(cp)) return false
-      if (!Character.isLetter(cp)) continue
-      if (!isLatinScript(cp)) return false
-      sawLatinLetter = true
+      when {
+        Character.isDigit(cp) -> return false
+        Character.isLetter(cp) -> {
+          if (!isLatinScript(cp)) return false
+          sawLatinLetter = true
+        }
+        Character.isWhitespace(cp) -> Unit
+        cp.toChar() in ROMANISATION_PUNCTUATION -> Unit
+        Character.getType(cp) == Character.NON_SPACING_MARK.toInt() -> Unit
+        else -> return false
+      }
     }
     return sawLatinLetter
   }
 
+  /** Punctuation that legitimately appears inside a transliteration. */
+  private const val ROMANISATION_PUNCTUATION = ".,'\u2019\u02BC-\u2010\u2013()[]&!?:;/"
+
   /**
-   * Whether [suffixed] is [plain] carrying YouTube Music's romanisation suffix.
+   * The non-Latin head of a `<non-Latin head> - <Latin romanisation>` title, or `null`.
+   *
+   * Expects [stripped] to have already been through [stripNoise], so ordinary noise — `(feat. X)`,
+   * `- Remastered`, `(Official Audio)` — is gone before the shape is judged. That ordering is what
+   * makes the rule correct rather than merely usually-right: without it, a Spotify title of
+   * `夜の踊り子 - Remastered` reads as *already romanised*, the "one side only" rule blocks the
+   * special case, and the correct recording scores 0.400 and fails. Measured, not theorised.
+   */
+  private fun romanisedHead(stripped: String): String? {
+    val (head, suffix) = splitDashSuffix(stripped) ?: return null
+    if (!isRomanisationSuffix(suffix)) return null
+    // A Latin head never qualifies, or the "Circles" / "Circles Around The Sun" false-positive
+    // class comes straight back.
+    if (!hasNonLatinLetter(head)) return null
+    return head
+  }
+
+  /**
+   * Whether the two titles are the same song written with and without YouTube Music's romanisation.
    *
    * Pair-conditioned on purpose. An earlier version stripped the suffix inside [stripNoise], which
    * is context-free — it sees one title at a time and cannot tell a transliteration from
    * identity-bearing text, so it permanently collapsed titles differing *only* by that suffix:
-   * `同じ頭 - Part One` and `同じ頭 - Part Two` became indistinguishable, and artist, album and
-   * duration are identical for adjacent tracks so nothing else would have caught it. It also had a
-   * far wider blast radius than intended, because [canonical] feeds artist-set comparison, album
-   * similarity and equivalence-cluster identity — not just title matching.
+   * `同じ頭 - Part One` and `同じ頭 - Part Two` became indistinguishable, and adjacent album tracks
+   * share artist, album and duration so nothing else would have caught it. It also had a far wider
+   * blast radius than intended, because [canonical] feeds artist-set comparison, album similarity
+   * and equivalence-cluster identity — not just title matching.
    *
-   * Confining it here means the relaxation applies to exactly one comparison and only when the
-   * evidence is unambiguous.
+   * Requires the shape on **exactly one** side. Two romanisation-shaped suffixes mean the titles are
+   * being distinguished *by* those suffixes, which is precisely the identity case above.
    */
-  private fun isRomanisationOf(suffixed: String, plain: String): Boolean {
-    // One side only. If the other title carries its own romanisation-shaped suffix, the two are
-    // being distinguished *by* their suffixes and must not be collapsed.
-    splitDashSuffix(plain)?.let { (_, otherSuffix) -> if (isRomanisationSuffix(otherSuffix)) return false }
+  private fun isRomanisationPair(strippedA: String, strippedB: String): Boolean {
+    val headA = romanisedHead(strippedA)
+    val headB = romanisedHead(strippedB)
+    // Exactly one side, either side — the romanised title is not always the YouTube one.
+    if ((headA == null) == (headB == null)) return false
 
-    val (head, suffix) = splitDashSuffix(suffixed) ?: return false
-    if (!isRomanisationSuffix(suffix)) return false
-    // The head must actually be non-Latin, or this is just an ordinary Latin subtitle and the
-    // "Circles" / "Circles Around The Sun" false-positive class comes straight back.
-    if (!hasNonLatinLetter(head)) return false
-
-    val canonicalHead = canonical(head)
-    return canonicalHead.isNotEmpty() && canonicalHead == canonical(plain)
+    val head = headA ?: headB!!
+    val other = if (headA != null) strippedB else strippedA
+    val normalisedHead = normalize(head)
+    return normalisedHead.isNotEmpty() && normalisedHead == normalize(other)
   }
 
   /** `(2022 Remaster)`, `- Remastered 2011`, `[2009 Digital Remaster]`, ... */
@@ -209,8 +234,13 @@ object TextNormalizer {
    * extra descriptive word but not of two genuinely different titles.
    */
   fun similarity(a: String, b: String): Double {
-    val ca = canonical(a)
-    val cb = canonical(b)
+    // Ordinary noise removal runs independently on both sides FIRST. Everything below judges the
+    // stripped strings, which is what lets `夜の踊り子 - Remastered` be recognised as an ordinary
+    // title rather than an already-romanised one.
+    val strippedA = stripNoise(a)
+    val strippedB = stripNoise(b)
+    val ca = normalize(strippedA)
+    val cb = normalize(strippedB)
     if (ca.isEmpty() || cb.isEmpty()) return 0.0
     if (ca == cb) return 1.0
 
@@ -219,10 +249,11 @@ object TextNormalizer {
     // spaces, so it canonicalises to a SINGLE token, and the appended romanisation drives token-set
     // recall to 1/n. Measured: the correct recording, right artist, exact duration, scored 0.40 and
     // fell under the confidence threshold; whether a track played came down to how many words its
-    // romanisation happened to add. Handled here, pair-conditioned, rather than by stripping in
-    // canonical() — see isRomanisationOf for why that was the wrong place.
-    if (isRomanisationOf(a, b) || isRomanisationOf(b, a)) return 1.0
+    // romanisation happened to add.
+    if (isRomanisationPair(strippedA, strippedB)) return 1.0
 
+    // No match on the special case: fall through to ordinary similarity on the same stripped
+    // strings, so nothing is scored twice or scored against a half-processed title.
     val ta = ca.split(' ').filter { it.isNotEmpty() }.toSet()
     val tb = cb.split(' ').filter { it.isNotEmpty() }.toSet()
     if (ta.isEmpty() || tb.isEmpty()) return 0.0
