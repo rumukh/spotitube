@@ -45,6 +45,12 @@ class LinkHandlerActivity : ComponentActivity() {
 
   private var status by mutableStateOf("Looking up the track…")
 
+  /** In-flight resolve, cancelled when a newer intent arrives. */
+  private var resolveJob: kotlinx.coroutines.Job? = null
+
+  /** Incremented per intent; only the newest generation may act or finish. */
+  private var currentGeneration = 0
+
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     setContent { SpotitubeTheme { OverlayCard(status) } }
@@ -96,16 +102,24 @@ class LinkHandlerActivity : ComponentActivity() {
       return
     }
 
-    lifecycleScope.launch {
-      val outcome =
-        runCatching { resolver.resolve(input) }
-          .getOrElse { error ->
-            Log.w(TAG, "Resolve failed", error)
-            ResolveOutcome.Unsupported(error.message ?: error.javaClass.simpleName)
-          }
-      act(outcome)
-      finish()
-    }
+    // A second link can arrive via onNewIntent while the first is still resolving. Cancel the
+    // in-flight job and claim a generation, so only the newest request can act or finish: otherwise
+    // whichever resolve returned first would launch its result and finish() the activity, either
+    // dropping the newer intent or launching two apps back to back.
+    resolveJob?.cancel()
+    val generation = ++currentGeneration
+    resolveJob =
+      lifecycleScope.launch {
+        val outcome =
+          runCatching { resolver.resolve(input) }
+            .getOrElse { error ->
+              Log.w(TAG, "Resolve failed", error)
+              ResolveOutcome.Unsupported(error.message ?: error.javaClass.simpleName)
+            }
+        if (generation != currentGeneration) return@launch
+        act(outcome)
+        finish()
+      }
   }
 
   private fun act(outcome: ResolveOutcome) {

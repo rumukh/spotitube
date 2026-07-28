@@ -98,7 +98,8 @@ object MatchScorer {
    */
   const val MAX_DURATION_DELTA_SECONDS = 12
 
-  private const val MIN_ARTIST_SCORE = 0.25
+  /** A whole artist name must match. Token overlap alone can never reach this. */
+  private const val MIN_ARTIST_SCORE = 0.55
 
   private const val EXPLICIT_AGREE_BONUS = 0.02
   private const val EXPLICIT_DISAGREE_PENALTY = 0.06
@@ -265,15 +266,20 @@ object MatchScorer {
       candidates.map { score(spotify, it) }.sortedWith(compareByDescending<ScoredMatch> { it.score }.thenBy { it.song.position })
     val top = ranked.firstOrNull()
 
-    // Equivalence cluster. Everything within AMBIGUITY_MARGIN of the winner is close enough that
-    // only presentation separates it, so each one must be the *same recording* — same normalised
-    // title, same artist set, no variant markers. Two releases of one recording tying is benign and
-    // plays; a near-tie against something genuinely different is a coin toss and opens search.
+    // Equivalence cluster. Everything close enough to the winner that only presentation separates
+    // it must be the *same recording* — same normalised title, same artist set, no variant markers.
+    // Two releases of one recording tying is benign and plays; a near-tie against something
+    // genuinely different is a coin toss and opens search.
+    //
+    // The band is measured on CORE, never on rank. Rank carries album-link, artist-channel,
+    // explicit and position adjustments, and a dangerous rival that simply lacks those structural
+    // links could otherwise be pushed outside the band and silently excluded from the safety check.
+    val topCore = ranked.filter { !it.vetoed }.maxOfOrNull { it.core } ?: 0.0
     val ambiguous =
       top != null &&
         !top.vetoed &&
-        ranked.drop(1).any { rival ->
-          !rival.vetoed && top.score - rival.score <= AMBIGUITY_MARGIN && !sameRecording(top, rival)
+        ranked.any { rival ->
+          rival !== top && !rival.vetoed && rival.core >= topCore - AMBIGUITY_MARGIN && !sameRecording(top, rival)
         }
 
     val confident =
@@ -315,16 +321,20 @@ object MatchScorer {
     val exact = a.intersect(b).size
     if (exact > 0) return 0.60 + 0.40 * (exact.toDouble() / minOf(a.size, b.size))
 
-    // No full-name match. Some uploads collapse "Post Malone & Swae Lee" into one string, so also
-    // accept a full Spotify artist appearing as a substring of a candidate artist.
-    val substringHit = a.any { s -> b.any { c -> c.contains(s) || s.contains(c) } }
-    if (substringHit) return 0.55
+    // No full-name match. Some uploads collapse "Post Malone & Swae Lee" into a single string, so
+    // accept a WHOLE Spotify artist appearing inside a candidate artist — but only in that
+    // direction. The reverse is not a whole-artist match at all: a candidate called "Post" is
+    // contained by "Post Malone" without being them, and would otherwise score 0.55 and autoplay.
+    val candidateContainsWholeArtist = a.any { s -> b.any { c -> c.contains(s) } }
+    if (candidateContainsWholeArtist) return 0.55
 
     val ta = a.flatMap { it.split(' ') }.filter { it.isNotEmpty() }.toSet()
     val tb = b.flatMap { it.split(' ') }.filter { it.isNotEmpty() }.toSet()
     if (ta.isEmpty() || tb.isEmpty()) return 0.0
     val jaccard = ta.intersect(tb).size.toDouble() / ta.union(tb).size
-    return 0.5 * jaccard
+    // Bare token overlap must stay strictly below MIN_ARTIST_SCORE: sharing a word ("Rick Roll" vs
+    // "Rick Astley", "Post Lee" vs "Post Malone") is not evidence of being the same artist.
+    return 0.5 * jaccard * MIN_ARTIST_SCORE
   }
 
   /** Variant markers present on the candidate but absent from the Spotify title. */

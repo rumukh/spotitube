@@ -42,14 +42,16 @@ class MatchScorerTest {
     album: String? = null,
     position: Int = 0,
     isExplicit: Boolean? = null,
-  ) = YouTubeSong(
-    videoId,
-    title,
-    artists,
-    album,
+      hasAlbumLink: Boolean = false,
+      hasArtistChannel: Boolean = false,
+    ) = YouTubeSong(
+      videoId,
+      title,
+      artists,
+      album,
     duration,
-    hasAlbumLink = true,
-    hasArtistChannel = true,
+    hasAlbumLink = hasAlbumLink,
+    hasArtistChannel = hasArtistChannel,
     isExplicit = isExplicit,
     position = position,
   )
@@ -213,6 +215,75 @@ class MatchScorerTest {
     val outcome = MatchScorer.best(meta, candidates)
     assertTrue("expected ambiguity, got ${outcome.ranked.joinToString { it.explain() }}", outcome.ambiguous)
     assertFalse(outcome.confident)
+  }
+
+  @Test
+  fun `ordering bonuses cannot push a dangerous rival out of the safety cluster`() {
+    // The winner carries an album link and an artist channel; the rival carries neither, so its
+    // RANK is well below the winner's while its CORE is identical. If the cluster band were
+    // measured on rank the rival would fall outside it, the guard would not fire, and we would
+    // auto-play one of two candidates that are not the same recording.
+    val meta =
+      SpotifyTrackMeta(title = "Sunflower", artists = listOf("Post Malone", "Swae Lee"), durationSeconds = 158)
+    val candidates =
+      listOf(
+        song(
+          videoId = "aaaaaaaaaaa",
+          title = "Sunflower",
+          artists = listOf("Post Malone", "Swae Lee"),
+          duration = 158,
+          hasAlbumLink = true,
+          hasArtistChannel = true,
+        ),
+        song(
+          videoId = "bbbbbbbbbbb",
+          title = "Sunflower",
+          artists = listOf("Swae Lee"),
+          duration = 158,
+          position = 1,
+        ),
+      )
+    val outcome = MatchScorer.best(meta, candidates)
+    val top = outcome.ranked[0]
+    val rival = outcome.ranked[1]
+    assertTrue("rank gap should exceed the margin: ${top.explain()} vs ${rival.explain()}", top.score - rival.score > 0.02)
+    assertTrue("expected ambiguity despite the rank gap", outcome.ambiguous)
+    assertFalse(outcome.confident)
+  }
+
+  @Test
+  fun `a shortened artist name is not a whole artist match`() {
+    // "Post" is CONTAINED BY "Post Malone" without being them. Accepting the reverse substring
+    // scored it 0.55, which with an exact title reached ~0.79 and auto-played a different artist.
+    for (impostor in listOf("Post", "Swae", "Malone Post", "Post Lee")) {
+      val meta = SpotifyTrackMeta(title = "Sunflower", artists = listOf("Post Malone", "Swae Lee"), durationSeconds = 158)
+      val outcome =
+        MatchScorer.best(
+          meta,
+          listOf(song(videoId = "aaaaaaaaaaa", title = "Sunflower", artists = listOf(impostor), duration = 158)),
+        )
+      assertFalse("'$impostor' must not auto-play: ${outcome.ranked[0].explain()}", outcome.confident)
+    }
+  }
+
+  @Test
+  fun `a collapsed artist string still matches`() {
+    // The inverse guard: some uploads collapse the credit into one string, and a WHOLE Spotify
+    // artist appearing inside it is a genuine match that must keep working.
+    val meta = SpotifyTrackMeta(title = "Sunflower", artists = listOf("Post Malone"), durationSeconds = 158)
+    val outcome =
+      MatchScorer.best(
+        meta,
+        listOf(
+          song(
+            videoId = "aaaaaaaaaaa",
+            title = "Sunflower",
+            artists = listOf("Post Malone & Swae Lee"),
+            duration = 158,
+          )
+        ),
+      )
+    assertTrue("collapsed credit should match: ${outcome.ranked[0].explain()}", outcome.confident)
   }
 
   @Test

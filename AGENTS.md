@@ -128,6 +128,11 @@ Run from the project root. `--no-daemon --console=plain` keeps output parseable 
 tool calls; drop `--no-daemon` for faster iterative local work.
 
 ```powershell
+# ALWAYS pin the serial first. Gradle device tasks target EVERY attached device and honour
+# ANDROID_SERIAL, NOT `adb -s` — this is how the debug APK once got installed on, and then
+# uninstalled from, the owner's personal phone without consent. See §8.
+$env:ANDROID_SERIAL='emulator-5554'
+
 .\gradlew.bat --no-daemon --console=plain :app:assembleDebug          # build APK
 .\gradlew.bat --no-daemon --console=plain :app:testDebugUnitTest      # JVM unit tests
 .\gradlew.bat --no-daemon --console=plain :app:connectedDebugAndroidTest  # needs a device
@@ -157,7 +162,7 @@ Launch **detached** so it survives the session and doesn't block:
 Wait for boot (`adb devices` shows `offline` → `device`; takes ~1–2 min):
 
 ```powershell
-adb wait-for-device
+adb -s emulator-5554 wait-for-device                     # never bare `adb wait-for-device`
 adb -s emulator-5554 shell getprop sys.boot_completed    # "1" when ready
 ```
 

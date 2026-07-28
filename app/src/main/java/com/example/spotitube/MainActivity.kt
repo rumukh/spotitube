@@ -1,5 +1,6 @@
 package com.example.spotitube
 
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
@@ -264,15 +265,25 @@ private fun HomeScreen() {
 }
 
 /**
- * The Spotify link on the clipboard, or `null`. Returns only what parses as a Spotify link, so
- * arbitrary clipboard content never enters the app's state, and is never logged or persisted.
+ * The canonical Spotify URL on the clipboard, or `null`.
+ *
+ * Returns only the parsed canonical link, never the surrounding text: the clipboard may hold a
+ * whole message and only the link is ours to act on. Uses `item.text` rather than `coerceToText`,
+ * which would dereference a clipboard content URI — a provider read, on the main thread, against
+ * arbitrary data. Nothing here is logged or persisted.
  */
 private fun spotifyLinkInClipboard(context: Context): String? {
   val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return null
-  val item = runCatching { clipboard.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0) }.getOrNull()
-  val text = item?.coerceToText(context)?.toString()?.trim().orEmpty()
+  val clip = runCatching { clipboard.primaryClip }.getOrNull() ?: return null
+  if (clip.itemCount == 0) return null
+  if (clip.description?.hasMimeType(ClipDescription.MIMETYPE_TEXT_PLAIN) != true &&
+    clip.description?.hasMimeType(ClipDescription.MIMETYPE_TEXT_HTML) != true
+  ) {
+    return null
+  }
+  val text = runCatching { clip.getItemAt(0).text?.toString() }.getOrNull()?.trim().orEmpty()
   if (text.isEmpty() || text.length > 2048) return null
-  return if (SpotifyLinkParser.findIn(text) != null) text else null
+  return SpotifyLinkParser.findIn(text)?.canonicalUrl
 }
 
 /** Executes the full resolve pipeline and renders it as text. Never launches an app. */

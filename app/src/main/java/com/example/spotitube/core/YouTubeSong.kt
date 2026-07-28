@@ -88,7 +88,15 @@ object InnerTubeParser {
     return songs
   }
 
-  /** Documented path: prefer the shelf literally titled "Songs", else take shelves in order. */
+  /**
+   * Documented path: the shelf literally titled "Songs".
+   *
+   * The request pins `hl=en` and sends the Songs filter param, so a missing "Songs" title means the
+   * schema drifted rather than that the user's locale differs. Falling back to *every* shelf would
+   * feed Videos or Top Results rows into auto-play, so we only accept an untitled fallback when
+   * there is exactly one shelf — which the filter param guarantees is the songs one. More than one
+   * unrecognised shelf is genuinely ambiguous: return nothing and let the caller open search.
+   */
   private fun itemsFromShelves(root: JsonElement): List<JsonElement> {
     val sections =
       root
@@ -101,7 +109,12 @@ object InnerTubeParser {
     if (shelves.isEmpty()) return emptyList()
 
     val songShelves = shelves.filter { runsText(it.obj("title")).equals("Songs", ignoreCase = true) }
-    val chosen = songShelves.ifEmpty { shelves }
+    val chosen =
+      when {
+        songShelves.isNotEmpty() -> songShelves
+        shelves.size == 1 -> shelves
+        else -> return emptyList()
+      }
     return chosen.flatMap { shelf -> shelf.arr("contents").mapNotNull { it.obj(ITEM_KEY) } }
   }
 
