@@ -192,6 +192,12 @@ class LatestLinkCoordinator<T>(
      * zero. Only a trace where the sending app remains input-capable *after* the old launch side
      * effect, and accepts a second tap before focus transfer, justifies a non-zero default — and
      * then it should be that measured interval plus modest headroom, not automatically 1,000 ms.
+     *
+     * **The second tap must be a real one.** A host-injected `am start` after the first `RESULT`
+     * does not qualify, however well it reproduces the timing: it delivers an intent directly and
+     * therefore bypasses the only question being asked — whether a *human* could still have tapped
+     * the sending app at that moment. Injection can manufacture a qualifying-looking trace for a
+     * window that no user could ever need.
      */
     const val DEFAULT_SETTLE_WINDOW_MILLIS = 0L
   }
