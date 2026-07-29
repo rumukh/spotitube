@@ -189,6 +189,28 @@ class MatchDiagnosticsTest {
     assertEquals("best core 0.68 below threshold 0.70", germanReason)
   }
 
+  @Test
+  fun `the assertions themselves do not depend on the device locale`() = runTest {
+    // A real hole, and the dangerous half is not the obvious one. `assertReportsCoreAndRank` built
+    // its expected substrings with `"core=%.3f".format(...)`, which uses the DEFAULT locale:
+    //   * on a comma-decimal machine the whole class would fail spuriously, and — worse —
+    //   * if production ever regressed to default-locale formatting, the expectation would render
+    //     commas too and agree with the bug. An expectation built the same way as the thing it
+    //     checks cannot detect a fault they share.
+    // The helper now formats through Locale.ROOT, so it is pinned to the literal shape instead.
+    val play = play()
+    val line = OutcomeLog.playFields(play)
+    withLocale(Locale.GERMANY) { assertReportsCoreAndRank(play.diagnostics, line) }
+
+    // Falsified: the default-locale form of the same expectation does NOT survive the same locale.
+    assertThrows(
+      "a default-locale expectation must not be able to match a ROOT-rendered line",
+      AssertionError::class.java,
+    ) {
+      withLocale(Locale.GERMANY) { assertTrue(line, line.contains("core=%.3f".format(play.core))) }
+    }
+  }
+
   // --- what the line says -----------------------------------------------------------------------
 
   @Test
@@ -301,7 +323,7 @@ class MatchDiagnosticsTest {
       assertReportsCoreAndRank(correct, correct.format().replace(Regex(""" threshold=[0-9.,]+"""), ""))
     }
     assertThrows("the old label must not pass", AssertionError::class.java) {
-      assertNoAmbiguousLabel("videoId=lYBUbBu4W08 " + "score=%.3f".format(correct.rank))
+      assertNoAmbiguousLabel("videoId=lYBUbBu4W08 " + String.format(Locale.ROOT, "score=%.3f", correct.rank))
     }
   }
 
@@ -343,12 +365,25 @@ class MatchDiagnosticsTest {
 
   // --- helpers ----------------------------------------------------------------------------------
 
+  /**
+   * Formats its expectations through [Locale.ROOT], never the default locale.
+   *
+   * Building the expected substring the same way production builds the line would make the two
+   * share any locale fault, and the assertion would pass on a comma-decimal device while the log
+   * was unparseable. Pinned by `the assertions themselves do not depend on the device locale`.
+   */
   private fun assertReportsCoreAndRank(expected: MatchDiagnostics, rendered: String) {
-    assertTrue("must name the evidence score: $rendered", rendered.contains("core=%.3f".format(expected.core)))
-    assertTrue("must name the ordering score: $rendered", rendered.contains("rank=%.3f".format(expected.rank)))
+    assertTrue(
+      "must name the evidence score: $rendered",
+      rendered.contains(String.format(Locale.ROOT, "core=%.3f", expected.core)),
+    )
+    assertTrue(
+      "must name the ordering score: $rendered",
+      rendered.contains(String.format(Locale.ROOT, "rank=%.3f", expected.rank)),
+    )
     assertTrue(
       "must name the bar core had to clear: $rendered",
-      rendered.contains("threshold=%.2f".format(expected.threshold)),
+      rendered.contains(String.format(Locale.ROOT, "threshold=%.2f", expected.threshold)),
     )
   }
 
