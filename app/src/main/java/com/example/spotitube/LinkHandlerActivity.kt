@@ -186,11 +186,18 @@ class LinkHandlerActivity : ComponentActivity() {
   private fun act(outcome: ResolveOutcome) {
     when (outcome) {
       is ResolveOutcome.PlayOnYouTubeMusic -> {
-        // Identifiers and numbers only. `picked=` and `spotify=` used to carry the candidate's and
-        // the user's own track as TEXT — which contradicted the "no user text reaches logcat" claim
-        // outright, and had escaped the device audit because that checked `uri=`, `query=` and
-        // message bodies but never this line. The videoId still resolves to the same recording via
-        // public oEmbed, so correlation is unaffected; the on-screen status keeps the readable name.
+        // Identifiers and numbers only, and the two paths are now held to the SAME standard.
+        //
+        // They were not. `MATCH` carried `picked="<candidate>"` and `spotify="<the user's own
+        // track>"` as plain text on every successful play, since the first version — while the
+        // SEARCH branch below was carefully keeping the query out. The path we were careful about
+        // disclosed strictly less than the one we were not, which is how the gap survived: the
+        // device audit grepped for `uri=`, `query=` and message bodies, and a leak in a field
+        // nobody suspected cannot be found that way.
+        //
+        // Do not re-add a name here. The videoId resolves to the same recording via public oEmbed,
+        // so correlation is unaffected, and the on-screen status keeps the readable name where it
+        // belongs.
         Log.i(
           TAG,
           "MATCH videoId=${outcome.videoId} score=${"%.3f".format(outcome.score)} " +
@@ -214,8 +221,11 @@ class LinkHandlerActivity : ComponentActivity() {
         status = "No confident match — opening search"
         val report = LaunchIntents.open(this, outcome.url, LaunchIntents.YT_MUSIC_PACKAGE)
         // The query is the artist and title the user is looking up; keep it out of logcat. The
-        // diagnostic names the *losing candidate* instead — YouTube-side metadata plus our own
-        // arithmetic, the same class of disclosure as `picked=` on the MATCH line above.
+        // diagnostic identifies the losing candidate by videoId and sub-scores only — no title,
+        // artist or album text. That is now the same standard the MATCH branch above is held to;
+        // it did not used to be, and an earlier version of this comment cited MATCH's `picked=`
+        // field as the precedent that made a name here acceptable. That field is gone. If you find
+        // yourself justifying a name on one path by pointing at the other, check the other first.
         result(
           "SEARCH",
           report,
