@@ -1,5 +1,6 @@
 package com.example.spotitube.core
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -35,6 +36,28 @@ class ResolverTest {
   }
 
   private val rickUrl = "https://open.spotify.com/track/4PTG3Z6ehGkBFwjybzWkR8"
+
+  /** Throws [CancellationException] from whichever dependency the test names. */
+  private class CancellingSpotify(
+    private val onExpand: Boolean = false,
+    private val onFetch: Boolean = false,
+    private val pages: Map<String, String> = emptyMap(),
+  ) : SpotifyMetadataSource {
+    override suspend fun expandShortLink(link: SpotifyLink): SpotifyLink? {
+      if (onExpand) throw CancellationException("superseded")
+      return null
+    }
+
+    override suspend fun fetchTrack(link: SpotifyLink): SpotifyTrackMeta? {
+      if (onFetch) throw CancellationException("superseded")
+      return pages[link.canonicalUrl]?.let { SpotifyMetaParser.parse(it) }
+    }
+  }
+
+  private class CancellingYouTube : YouTubeMusicSearch {
+    override suspend fun searchSongs(query: String): List<YouTubeSong> =
+      throw CancellationException("superseded")
+  }
 
   private fun rickSpotify() = FakeSpotify(mapOf(rickUrl to Fixtures.read(Fixtures.RICK_ASTLEY_HTML)))
 
@@ -197,6 +220,61 @@ class ResolverTest {
     // ...and the bar it had to clear, so the reader need not know the constant.
     assertTrue(diagnostic, diagnostic.contains("threshold=0.70"))
     assertTrue("the veto is the cause here: $diagnostic", diagnostic.contains("VETO["))
+  }
+
+  @Test
+  fun `a cancelled resolve produces NO outcome, from any dependency`() = runTest {
+    // A correctness property of THIS layer, deliberately not delegated to the coordinator.
+    //
+    // The coordinator discards a stale ticket, so today a misclassified cancellation is invisible.
+    // That is defence in depth, not permission to misclassify: it is one reordering of the
+    // generation check away from surfacing, and a cancelled coroutine that returns an Outcome has
+    // also failed to propagate cancellation, so it keeps doing work nobody wants.
+    //
+    // The concrete symptom this guards: `runCatching { youTube.searchSongs(query) }` catches
+    // CancellationException, turning a superseded request into an empty candidate list and then
+    // into SearchOnYouTubeMusic(reason = "no candidates from search") — the exact string measured
+    // on device for a track that had scored 0.810 seconds earlier.
+    //
+    // Asserted for EVERY dependency, not just the one that had the bug, because the next one will
+    // be somewhere else.
+    val cases: List<Pair<String, SpotitubeResolver>> =
+      listOf(
+        "expandShortLink" to
+          SpotitubeResolver(CancellingSpotify(onExpand = true), rickYouTube()),
+        "fetchTrack" to SpotitubeResolver(CancellingSpotify(onFetch = true), rickYouTube()),
+        "searchSongs" to
+          SpotitubeResolver(
+            CancellingSpotify(pages = mapOf(rickUrl to Fixtures.read(Fixtures.RICK_ASTLEY_HTML))),
+            CancellingYouTube(),
+          ),
+      )
+
+    for ((dependency, resolver) in cases) {
+      val url = if (dependency == "expandShortLink") "https://spotify.link/abc123XYZ" else rickUrl
+      var outcome: ResolveOutcome? = null
+      var cancelled = false
+      try {
+        outcome = resolver.resolve(url)
+      } catch (_: CancellationException) {
+        cancelled = true
+      }
+      assertTrue(
+        "$dependency: cancellation must propagate, but resolve() returned $outcome — a superseded " +
+          "request must produce no outcome at all",
+        cancelled,
+      )
+      assertNull("$dependency: no outcome may be produced", outcome)
+    }
+  }
+
+  @Test
+  fun `a genuine search failure still degrades to the search page`() = runTest {
+    // The other side of the same boundary: a REAL failure must still fall back, or the fix above
+    // would have turned every network error into a crash.
+    val outcome = SpotitubeResolver(rickSpotify(), FakeYouTube(boom = true)).resolve(rickUrl)
+    val search = outcome as ResolveOutcome.SearchOnYouTubeMusic
+    assertTrue(search.reason, search.reason.contains("no candidates"))
   }
 
   @Test
