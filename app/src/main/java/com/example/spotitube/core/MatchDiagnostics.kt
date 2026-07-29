@@ -1,5 +1,7 @@
 package com.example.spotitube.core
 
+import java.util.Locale
+
 /**
  * Everything the app is allowed to say about a match decision on a log line.
  *
@@ -40,9 +42,15 @@ data class MatchDiagnostics(
    *
    * Every quantity is named. There is no bare `score` label left for a reader — or a regression
    * baseline — to guess the meaning of.
+   *
+   * [Locale.ROOT], not the default locale: `%.3f` under a comma-decimal locale renders `1,000`,
+   * which changes the field separator inside a comma-joined line and makes a device report depend
+   * on the phone's language settings. The owner's phone is not the only phone this could run on.
    */
   fun format(): String =
-    "core=%.3f rank=%.3f (t=%.2f a=%.2f al=%.2f)%s threshold=%.2f%s".format(
+    String.format(
+      Locale.ROOT,
+      "core=%.3f rank=%.3f (t=%.2f a=%.2f al=%.2f)%s threshold=%.2f%s",
       core,
       rank,
       titleScore,

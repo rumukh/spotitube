@@ -50,7 +50,13 @@ data class SpotifyTrackMeta(
   val searchQuery: String
     get() = listOf(artistLine, title).filter { it.isNotBlank() }.joinToString(" ").trim()
 
-  /** A human-friendly one-liner for logs and the UI. */
+  /**
+   * A human-friendly one-liner for the UI.
+   *
+   * **Screen only, never logcat.** It is the track the user was sent, in plain text — the exact
+   * thing the `spotify=` field on the old MATCH line disclosed before it was deleted. If a log line
+   * needs to identify a track, use the opaque id.
+   */
   val display: String
     get() = if (artists.isEmpty()) title else "$artistLine — $title"
 

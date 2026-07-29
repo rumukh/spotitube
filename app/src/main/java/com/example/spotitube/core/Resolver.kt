@@ -1,5 +1,6 @@
 package com.example.spotitube.core
 
+import java.util.Locale
 import kotlinx.coroutines.CancellationException
 
 /** What the app decided to do with a link. Rendered by the Android layer into an Intent. */
@@ -39,10 +40,10 @@ sealed interface ResolveOutcome {
    * term being the entire cause had to be derived by hand from the weights.
    *
    * It is rendered by [MatchDiagnostics.format], the same renderer the play path uses, so the two
-   * outcomes disclose exactly the same fields and a device report can be read across both. An
-   * earlier version of this note justified the disclosure by citing MATCH's `picked=` and
-   * `spotify=` fields as precedent; those carried the candidate's name and the user's own track
-   * name, they have been deleted, and they are precedent for nothing.
+   * outcomes disclose exactly the same fields and a device report can be read across both — see
+   * [OutcomeLog]. An earlier version of this note justified the disclosure by citing MATCH's
+   * `picked=` and `spotify=` fields as precedent; those carried the candidate's name and the
+   * user's own track name, they have been deleted, and they are precedent for nothing.
    */
   data class SearchOnYouTubeMusic(
     val query: String,
@@ -139,9 +140,22 @@ class SpotitubeResolver(
           best == null -> "nothing ranked"
           best.vetoed -> "best candidate vetoed: ${best.vetoes.joinToString(",")}"
           watchUrl == null -> "malformed videoId"
-          else -> "best core %.2f below threshold %.2f".format(best.core, MatchScorer.CONFIDENCE_THRESHOLD)
+          else ->
+            // Locale.ROOT: this string is read from a device report, so its decimal separator must
+            // not depend on the phone's language.
+            String.format(
+              Locale.ROOT,
+              "best core %.2f below threshold %.2f",
+              best.core,
+              MatchScorer.CONFIDENCE_THRESHOLD,
+            )
         }
-      return ResolveOutcome.SearchOnYouTubeMusic(query, searchUrl, why, diagnostic = best?.let(::diagnose))
+      return ResolveOutcome.SearchOnYouTubeMusic(
+        query,
+        searchUrl,
+        why,
+        diagnostic = best?.let(OutcomeLog::searchDiagnostic),
+      )
     }
 
     return ResolveOutcome.PlayOnYouTubeMusic(
@@ -155,36 +169,5 @@ class SpotitubeResolver(
 
   companion object {
     fun youTubeMusicSearchUrl(query: String): String = YouTubeMusic.searchUrl(query)
-
-    /**
-     * Why the best candidate lost: **identifiers and numbers only, never text.**
-     *
-     * `t`/`a`/`al` are what make this diagnostic rather than merely negative — a bare `best 0.55`
-     * cannot distinguish "we found the wrong song" from "we found the right song and YouTube named
-     * the album differently", and those need opposite fixes.
-     *
-     * The candidate's title and artist are deliberately **not** here. They would be a near-copy of
-     * the user's own query on this path, since a losing candidate is by construction a close miss —
-     * so logging them would leak what was shared under the guise of logging YouTube's data. The
-     * `videoId` is sufficient for correlation and resolves to the same row via public oEmbed.
-     * Veto and note names are fixed category strings, not user content.
-     */
-    internal fun diagnose(best: ScoredMatch): String =
-      "bestVideoId=${best.song.videoId.ifBlank { "none" }} ${best.diagnostics().format()}"
-
-    /**
-     * The log fields for a successful play.
-     *
-     * Built here, in pure code, rather than inline in the Android layer, for two reasons. It is the
-     * only way the string that actually reaches logcat can be asserted by a JVM unit test — this
-     * project deliberately carries no instrumentation for that — and it makes the play path share
-     * [MatchDiagnostics.format] with [diagnose], so the two outcomes cannot drift apart into
-     * reporting different fields again.
-     *
-     * The id label differs from [diagnose] on purpose: `videoId` is the video we launched, whereas
-     * `bestVideoId` is the one that lost. Everything after it is byte-identical between the paths.
-     */
-    internal fun describe(play: ResolveOutcome.PlayOnYouTubeMusic): String =
-      "videoId=${play.videoId.ifBlank { "none" }} ${play.diagnostics.format()}"
   }
 }

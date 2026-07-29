@@ -25,6 +25,7 @@ import androidx.lifecycle.lifecycleScope
 import com.example.spotitube.core.LatestLinkCoordinator
 import com.example.spotitube.core.LinkRequestOutcome
 import com.example.spotitube.core.LoopGuard
+import com.example.spotitube.core.OutcomeLog
 import com.example.spotitube.core.OwnerGeneration
 import com.example.spotitube.core.ResolveOutcome
 import com.example.spotitube.core.SpotifyEntityType
@@ -204,19 +205,16 @@ class LinkHandlerActivity : ComponentActivity() {
         // search branch used that same word for the core in its reason text. A device baseline
         // comparing "the score" of a play against "the score" of a search was comparing different
         // quantities. Both, and the bar they are judged against, now come from one renderer shared
-        // with the search path — see SpotitubeResolver.describe.
-        val fields = SpotitubeResolver.describe(outcome)
-        Log.i(
-          TAG,
-          "MATCH $fields " +
-            "spotifyDuration=${outcome.spotify.durationSeconds} " +
-            "explicit=${outcome.spotify.isExplicit} playable=${outcome.spotify.isPlayable}" +
-            (outcome.spotify.playabilityReason?.let { " playabilityReason=$it" } ?: "") +
-            " metaSource=${outcome.spotify.source ?: "unknown"}",
-        )
+        // with the search path.
+        //
+        // The whole field list is assembled in core/OutcomeLog.kt, which is what makes the exact
+        // string that reaches logcat assertable from a JVM unit test — including a poison-sentinel
+        // test proving no title, artist, album or upstream text can appear in it. Interpolating
+        // fields here instead would put them back beyond the reach of any test this project runs.
+        Log.i(TAG, "MATCH ${OutcomeLog.matchLine(outcome)}")
         status = "Opening ${outcome.description}"
         val report = LaunchIntents.open(this, outcome.url, LaunchIntents.YT_MUSIC_PACKAGE)
-        result("PLAY", report, extra = "strategy=${YouTubeMusic.WATCH_STRATEGY} $fields")
+        result("PLAY", report, extra = OutcomeLog.playResultFields(outcome))
       }
       is ResolveOutcome.SearchOnYouTubeMusic -> {
         Log.i(TAG, "NO CONFIDENT MATCH reason=${outcome.reason}${outcome.diagnostic?.let { " $it" } ?: ""}")

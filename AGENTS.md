@@ -455,8 +455,21 @@ Every run ends with one structured line, e.g.
 
 ```
 RESULT outcome=PLAY started=true target=com.google.android.apps.youtube.music
-       via=preferred-app videoId=lYBUbBu4W08 score=1.060
+       via=preferred-app strategy=watch-v1 videoId=lYBUbBu4W08
+       core=1.000 rank=1.060 (t=1.00 a=1.00 al=1.00) threshold=0.70
+       notes=album-link,artist-channel
 ```
+
+> **`core` and `rank` are two different numbers and only `core` gates.** `core` is the evidence
+> score the confidence threshold is applied to; `rank` carries presentation bonuses and only decides
+> *which* candidate won. They can straddle the bar — a measured fixture scores core 0.680 against
+> rank 0.700 at a 0.70 threshold — so a baseline that reads "the score" off a run is comparing
+> nothing. There was a single `score=` field until `45379dc`; it was the **rank**, while the
+> threshold was applied to the core, and the SEARCH reason text used the same word for the core.
+> Anything grepping for `score=` must move to `core=` / `rank=`.
+>
+> The play line also reports `hasPlayabilityReason=<bool>` rather than the reason itself: that
+> string comes straight out of Spotify's embed payload and is not ours to put in logcat.
 
 No URI is logged: these lines land in logcat on the owner's own phone, and the URI is what
 they are listening to. `videoId` plus `outcome` is enough to diagnose a mis-resolution.
