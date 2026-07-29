@@ -173,6 +173,25 @@ class LatestLinkCoordinator<T>(
      *
      * Do not change this default without a device trace showing a second launch that arbitration
      * missed. Do not infer burst spacing from host-side sleeps; use the app's INPUT timestamps.
+     *
+     * **And measure the right interval — `START` → `Displayed` is the wrong one.** The tempting
+     * argument for a window is that on a cold start the sending app stays visible after we launch,
+     * so the user sees nothing happen and taps again. But the user can only re-tap while the sending
+     * app still owns **input focus**, and Android may hand top-resumed to YouTube Music's starting
+     * window almost immediately and only emit `Displayed` a second or two later once it has
+     * rendered. That render interval is *not* tappable time, so a `Displayed`-based number would
+     * overstate the exposure and argue for a window that nothing needs.
+     *
+     * Measure three things separately:
+     * 1. `ActivityTaskManager` START of YouTube Music;
+     * 2. focus transfer — the sending app losing top-resumed, or YT Music gaining it
+     *    (`wm_set_resumed_activity` / top-resumed event, plus a screenshot if it is ambiguous);
+     * 3. `Displayed`, as render latency only.
+     *
+     * The **vulnerable interval is 1 → 2**. A slow `Displayed` with prompt focus transfer supports
+     * zero. Only a trace where the sending app remains input-capable *after* the old launch side
+     * effect, and accepts a second tap before focus transfer, justifies a non-zero default — and
+     * then it should be that measured interval plus modest headroom, not automatically 1,000 ms.
      */
     const val DEFAULT_SETTLE_WINDOW_MILLIS = 0L
   }
