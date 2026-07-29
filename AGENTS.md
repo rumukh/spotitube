@@ -309,6 +309,18 @@ git show <sha>:<path> | Select-String <pattern>           # not the working tree
 fix that was never committed, and a pinned artifact must be attributable to a commit rather than
 to a directory. It is how the `owner`-in-companion bug was confirmed fixed.
 
+> **The specific trap that caused most of it: a detached pinned worktree answers about itself.**
+> We build pinned APKs from isolated worktrees. Inside one, `git status`, `git log`,
+> `git rev-parse HEAD` and every file read report **that worktree's** commit and contents —
+> correctly, and uselessly. One session sent five consecutive urgent corrections about
+> `DEFAULT_SETTLE_WINDOW_MILLIS = 500L` and about `RequestArbiter.kt` still existing. Both were
+> true where it was standing and neither had been true on `master` for hours.
+>
+> `git rev-parse --short origin/master` and `git show origin/master:<path>` name the ref
+> explicitly and so are correct from **any** directory, including inside a pinned worktree. Prefer
+> them over `HEAD`, over `git status`, and over opening the file — especially when you are about to
+> tell another session it is wrong.
+
 > **The rule that would have saved the most time: a directive is not landed until you have read it
 > back off disk.** A settle-window constant was relayed as corrected three times over ninety
 > minutes and committed wrong anyway; only `Select-String` on the file ever revealed it. If a
