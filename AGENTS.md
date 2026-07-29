@@ -401,7 +401,7 @@ Keep this honest; several claims here were overclaimed at some point and had to 
 | YT Music **starts playing** from `music.youtube.com/watch?v=` + `setPackage` | **Measured** on a real vivo X300 Pro (YT Music 9.29.54): `dumpsys media_session` showed `state=PLAYING(3)`, correct metadata, and position advancing 898 ms → 26966 ms. A loaded-but-idle screen cannot advance position. |
 | `spotify:{type}:{id}` routes correctly for all 6 forwarded types | **Measured**, screenshot-verified against real Spotify 9.1.68.1888. |
 | Tapping a link, sharing, manual paste, and non-track bounce into the real Spotify app | **Measured** on hardware. **Automatic clipboard-card detection is not measured working; it failed on the vivo** — copying a link and opening Spotitube showed no card, so the user pasted manually (`source=manual`). Do not cite the old `source=clipboard` claim. |
-| Classical Rachmaninov matching | **Release-blocking regression measured on c587b11.** Op.3 No.2 (`54DO864jFnvSi90rD99RrH`) PLAYED the correct `9CKroNTLHVU` on prior builds, but SEARCHES 4/4 now because a same-performance reissue enters the ambiguity band. Best remains correct at core 0.867 / rank 1.177, above threshold; user reproduced naturally and said: "It opens YT Music search. WTF? It was working yesterday." Do not describe classical playback as currently passing until the matcher fix is hardware-verified. |
+| Classical Rachmaninov matching | **Release-blocking regression measured on final reviewed build `49abe54`.** Op.3 No.2 (`54DO864jFnvSi90rD99RrH`) PLAYED the correct `9CKroNTLHVU` on prior builds, but SEARCHES 4/4 now because a same-performance reissue enters the ambiguity band. Best remains correct at core 0.867 / rank 1.177, above threshold; user reproduced naturally and said: "It opens YT Music search. WTF? It was working yesterday." Do not describe classical playback as currently passing until the matcher fix is hardware-verified. |
 | Low-confidence SEARCH fallback on device | **Measured.** Three Japanese tracks scored 0.51–0.55 on hardware and all opened search. Crucially YT Music's MediaSession did **not** change across all three runs — it still held the previous track — so SEARCH opens the search page and autoplays nothing. That branch is proven safe rather than assumed. The *cause* of those low scores has since been fixed; see the album row below. |
 | A genuinely non-Latin **title** on device | **Measured, and it found a real defect.** ブルーアンバー, 高嶺の花子さん and 青と夏 all fell to SEARCH at 0.51–0.55. See the album row below — the title romanisation fix was working; the album term was sinking them. |
 | **Album disagreement is not evidence** | **Measured on four real tracks, and the scorer was changed because of it.** With real merged metadata, album scored 0.00 for **three of four correct matches**: ラブストーリー vs "Love Story" and ブルーアンバー vs "Blue Amber" (same album, two scripts), and Attitude vs "Ao To Natsu" (YouTube naming the single, Spotify the parent album). As a flat −0.25 that dropped correct matches to 0.750, and anything short of a perfect title below the 0.70 threshold. Album now *corroborates but never contradicts* — full weight when it agrees at least as strongly as title and artist already do, renormalised away otherwise, and still a full ordering signal in `rank`. All four tracks now score **1.000**. Nothing was lost: album never rejected a wrong recording in that measurement — covers go to the artist veto, live/remix/instrumental to the variant veto, re-records to the duration veto. |
@@ -803,26 +803,27 @@ our own in-app buttons.
 The product owner explicitly prioritised the basic tap→PLAY flow over these copy fixes. Preserve them
 without letting them delay the classical matcher repair:
 
-* Vivo's Open-by-default screen shows **Open supported links**, **Verified links 0**, and **Add link**;
+* **Device-run finding:** Vivo's Open-by-default screen shows **Open supported links**,
+  **Verified links 0**, and **Add link**;
   it has no tickable Spotify host list. Do not instruct every user to "tick the Spotify addresses."
   Establish OEM/stock behavior before choosing replacement wording; never mutate settings automatically.
-* Opening Spotitube after copying a link showed no automatic card. Manual paste worked. User says this
+* **Device-run / product-owner finding:** Opening Spotitube after copying a link showed no automatic
+  card. Manual paste worked. User says this
   path is rare and 99% of use is direct tapping. Copy must promise paste as the fallback, not automatic
   detection.
 * MainActivity inline copy also contains untested absolutes/contradictions: Signal/Telegram lack the
   Android **share sheet**, which is not the same as "only offer Copy"; headline cannot promise autoplay
   because low-confidence SEARCH autoplays nothing; `whenever`/`always` exceed MIME, length, focus and
-  null-text clipboard limits; `short link link` is a typo.
+  null-text clipboard limits. The rendered `short link link` is not a source typo: the template adds
+  ` link` after `describe(SHORT_LINK)` has already returned `short link`; fix the interpolation site.
 * Clipboard mechanics need two future vivo measurements before any **Measured** claim: whether Android's
   paste notification appears merely on app open/return from Settings, and whether the ON_RESUME read
   loses the race to window focus and returns null. `getPrimaryClip()` triggers Android's notification;
-  ON_RESUME is not proof of input focus.
+  ON_RESUME is not proof of input focus. The observed missing card does not yet distinguish focus
+  denial from MIME, null text, or the 2,048-character cap.
 * Every user-facing onboarding string should move behind a pure JVM-testable copy seam. Guard the
   measured semantic claims, falsify each new test against the current bad wording, and keep
   DisposableEffect/ON_RESUME/button behavior out of a copy-only refactor.
-
-Full read-only report:
-`C:\Users\rmukhamedov\.copilot\session-state\1843e9d3-7df4-438e-9268-4ef99927d0c5\files\onboarding-truthfulness-review.md`.
 
 ### Gradle notes
 
