@@ -10,17 +10,39 @@ sealed interface ResolveOutcome {
     val videoId: String,
     val url: String,
     val description: String,
-    val score: Double,
+    /**
+     * Why this candidate won *and* why it was allowed to auto-play, as log-safe numbers.
+     *
+     * Both quantities are carried because they answer different questions and used to be
+     * conflated: this outcome reported [MatchDiagnostics.rank] under the name `score` while
+     * confidence was decided on [MatchDiagnostics.core], so a device report comparing a play
+     * figure against a search figure was comparing two different numbers.
+     */
+    val diagnostics: MatchDiagnostics,
     val spotify: SpotifyTrackMeta,
-  ) : ResolveOutcome
+  ) : ResolveOutcome {
+
+    /** Evidence score — the quantity [MatchDiagnostics.threshold] was applied to. */
+    val core: Double
+      get() = diagnostics.core
+
+    /** Ordering score — why this candidate beat the others, never why it was good enough. */
+    val rank: Double
+      get() = diagnostics.rank
+  }
 
   /**
    * No candidate was confidently the same recording, so open search instead of guessing.
    *
    * [diagnostic] carries the losing candidate and its sub-scores. Without it a SEARCH line says only
    * *that* we scored below threshold, never *why* — a real report read "best 0.55" and the album
-   * term being the entire cause had to be derived by hand from the weights. It is the same class of
-   * disclosure as the `picked=`/`spotify=` fields already on the MATCH line.
+   * term being the entire cause had to be derived by hand from the weights.
+   *
+   * It is rendered by [MatchDiagnostics.format], the same renderer the play path uses, so the two
+   * outcomes disclose exactly the same fields and a device report can be read across both. An
+   * earlier version of this note justified the disclosure by citing MATCH's `picked=` and
+   * `spotify=` fields as precedent; those carried the candidate's name and the user's own track
+   * name, they have been deleted, and they are precedent for nothing.
    */
   data class SearchOnYouTubeMusic(
     val query: String,
@@ -117,7 +139,7 @@ class SpotitubeResolver(
           best == null -> "nothing ranked"
           best.vetoed -> "best candidate vetoed: ${best.vetoes.joinToString(",")}"
           watchUrl == null -> "malformed videoId"
-          else -> "best score %.2f below threshold %.2f".format(best.core, MatchScorer.CONFIDENCE_THRESHOLD)
+          else -> "best core %.2f below threshold %.2f".format(best.core, MatchScorer.CONFIDENCE_THRESHOLD)
         }
       return ResolveOutcome.SearchOnYouTubeMusic(query, searchUrl, why, diagnostic = best?.let(::diagnose))
     }
@@ -126,7 +148,7 @@ class SpotitubeResolver(
       videoId = best.song.videoId,
       url = watchUrl,
       description = "${best.song.artistLine} — ${best.song.title}",
-      score = best.score,
+      diagnostics = best.diagnostics(),
       spotify = meta,
     )
   }
@@ -148,8 +170,21 @@ class SpotitubeResolver(
      * Veto and note names are fixed category strings, not user content.
      */
     internal fun diagnose(best: ScoredMatch): String =
-      "bestVideoId=${best.song.videoId.ifBlank { "none" }} ${best.explain()} " +
-        "threshold=%.2f".format(MatchScorer.CONFIDENCE_THRESHOLD) +
-        (if (best.notes.isNotEmpty()) " notes=${best.notes.joinToString(",")}" else "")
+      "bestVideoId=${best.song.videoId.ifBlank { "none" }} ${best.diagnostics().format()}"
+
+    /**
+     * The log fields for a successful play.
+     *
+     * Built here, in pure code, rather than inline in the Android layer, for two reasons. It is the
+     * only way the string that actually reaches logcat can be asserted by a JVM unit test — this
+     * project deliberately carries no instrumentation for that — and it makes the play path share
+     * [MatchDiagnostics.format] with [diagnose], so the two outcomes cannot drift apart into
+     * reporting different fields again.
+     *
+     * The id label differs from [diagnose] on purpose: `videoId` is the video we launched, whereas
+     * `bestVideoId` is the one that lost. Everything after it is byte-identical between the paths.
+     */
+    internal fun describe(play: ResolveOutcome.PlayOnYouTubeMusic): String =
+      "videoId=${play.videoId.ifBlank { "none" }} ${play.diagnostics.format()}"
   }
 }

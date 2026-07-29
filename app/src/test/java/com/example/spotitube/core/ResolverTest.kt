@@ -71,7 +71,12 @@ class ResolverTest {
     assertEquals("lYBUbBu4W08", play.videoId)
     assertEquals("https://music.youtube.com/watch?v=lYBUbBu4W08", play.url)
     assertEquals(listOf("Rick Astley Never Gonna Give You Up"), youTube.queries)
-    assertTrue(play.score >= MatchScorer.CONFIDENCE_THRESHOLD)
+    // Confidence is decided on CORE, so that is what must clear the bar. `rank` is reported
+    // alongside it and may legitimately sit above or below — it carries presentation bonuses and
+    // an explicit-mismatch penalty — which is exactly why one field called `score` could not stand
+    // in for both.
+    assertTrue(play.diagnostics.format(), play.core >= MatchScorer.CONFIDENCE_THRESHOLD)
+    assertEquals(MatchScorer.CONFIDENCE_THRESHOLD, play.diagnostics.threshold, 1e-9)
   }
 
   @Test

@@ -10,8 +10,14 @@ data class ScoredMatch(
    * so no accumulation of small bonuses can lift a weak match over [MatchScorer.CONFIDENCE_THRESHOLD].
    */
   val core: Double,
-  /** Ordering score: [core] plus presentation bonuses. Decides *which* candidate, never *whether*. */
-  val score: Double,
+  /**
+   * Ordering score: [core] plus presentation bonuses. Decides *which* candidate, never *whether*.
+   *
+   * Named `rank`, not `score`. As `score` this was the number the successful-play log line printed
+   * while the threshold was being applied to [core], so one label meant two different quantities
+   * depending on which branch produced it and nothing on either line disambiguated them.
+   */
+  val rank: Double,
   val titleScore: Double,
   val artistScore: Double,
   val albumScore: Double,
@@ -21,15 +27,25 @@ data class ScoredMatch(
   val vetoed: Boolean
     get() = vetoes.isNotEmpty()
 
-  fun explain(): String =
-    "core=%.3f rank=%.3f (t=%.2f a=%.2f al=%.2f)%s".format(
-      core,
-      score,
-      titleScore,
-      artistScore,
-      albumScore,
-      if (vetoed) " VETO[${vetoes.joinToString("|")}]" else "",
+  /**
+   * The log-safe view of this match: numbers and fixed category names, never candidate text.
+   *
+   * [threshold] is a parameter rather than a read of the constant so a caller judging against a
+   * different bar reports the bar it actually used.
+   */
+  fun diagnostics(threshold: Double = MatchScorer.CONFIDENCE_THRESHOLD): MatchDiagnostics =
+    MatchDiagnostics(
+      core = core,
+      rank = rank,
+      titleScore = titleScore,
+      artistScore = artistScore,
+      albumScore = albumScore,
+      threshold = threshold,
+      vetoes = vetoes,
+      notes = notes,
     )
+
+  fun explain(): String = diagnostics().format()
 }
 
 /** Outcome of ranking a search result set against the Spotify track. */
@@ -268,7 +284,7 @@ object MatchScorer {
     return ScoredMatch(
       song = candidate,
       core = if (vetoed) 0.0 else core.coerceAtLeast(0.0),
-      score = if (vetoed) 0.0 else rank.coerceAtLeast(0.0),
+      rank = if (vetoed) 0.0 else rank.coerceAtLeast(0.0),
       titleScore = titleScore,
       artistScore = artistScore,
       albumScore = albumScore,
@@ -288,7 +304,7 @@ object MatchScorer {
       return MatchOutcome(null, confident = false, ranked = emptyList(), insufficientEvidence = insufficientEvidence)
     }
     val ranked =
-      candidates.map { score(spotify, it) }.sortedWith(compareByDescending<ScoredMatch> { it.score }.thenBy { it.song.position })
+      candidates.map { score(spotify, it) }.sortedWith(compareByDescending<ScoredMatch> { it.rank }.thenBy { it.song.position })
     val top = ranked.firstOrNull()
 
     // Equivalence cluster. Everything close enough to the winner that only presentation separates

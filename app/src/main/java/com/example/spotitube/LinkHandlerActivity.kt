@@ -198,9 +198,17 @@ class LinkHandlerActivity : ComponentActivity() {
         // Do not re-add a name here. The videoId resolves to the same recording via public oEmbed,
         // so correlation is unaffected, and the on-screen status keeps the readable name where it
         // belongs.
+        //
+        // The numbers are named individually for the same reason the names are absent: one bare
+        // `score` field carried the RANK here while the threshold was applied to the CORE, and the
+        // search branch used that same word for the core in its reason text. A device baseline
+        // comparing "the score" of a play against "the score" of a search was comparing different
+        // quantities. Both, and the bar they are judged against, now come from one renderer shared
+        // with the search path — see SpotitubeResolver.describe.
+        val fields = SpotitubeResolver.describe(outcome)
         Log.i(
           TAG,
-          "MATCH videoId=${outcome.videoId} score=${"%.3f".format(outcome.score)} " +
+          "MATCH $fields " +
             "spotifyDuration=${outcome.spotify.durationSeconds} " +
             "explicit=${outcome.spotify.isExplicit} playable=${outcome.spotify.isPlayable}" +
             (outcome.spotify.playabilityReason?.let { " playabilityReason=$it" } ?: "") +
@@ -208,13 +216,7 @@ class LinkHandlerActivity : ComponentActivity() {
         )
         status = "Opening ${outcome.description}"
         val report = LaunchIntents.open(this, outcome.url, LaunchIntents.YT_MUSIC_PACKAGE)
-        result(
-          "PLAY",
-          report,
-          extra =
-            "strategy=${YouTubeMusic.WATCH_STRATEGY} videoId=${outcome.videoId} " +
-              "score=${"%.3f".format(outcome.score)}",
-        )
+        result("PLAY", report, extra = "strategy=${YouTubeMusic.WATCH_STRATEGY} $fields")
       }
       is ResolveOutcome.SearchOnYouTubeMusic -> {
         Log.i(TAG, "NO CONFIDENT MATCH reason=${outcome.reason}${outcome.diagnostic?.let { " $it" } ?: ""}")

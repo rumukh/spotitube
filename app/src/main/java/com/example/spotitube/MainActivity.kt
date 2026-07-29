@@ -325,7 +325,10 @@ private suspend fun runSelfTest(): String {
         appendLine("duration: ${outcome.spotify.durationSeconds}s")
         appendLine("matched : ${outcome.description}")
         appendLine("videoId : ${outcome.videoId}")
-        append("score   : ${"%.3f".format(outcome.score)}")
+        // The full scoring line, not one number: `core` is what the threshold gated on and `rank`
+        // is only why this candidate beat the others, and a single figure here could not say which
+        // it was. Same renderer as the logs, so a screenshot and a logcat line agree.
+        append("scoring : ${outcome.diagnostics.format()}")
       }
     is ResolveOutcome.SearchOnYouTubeMusic ->
       "NO CONFIDENT MATCH in ${elapsed}ms\nquery: ${outcome.query}\nwhy  : ${outcome.reason}"

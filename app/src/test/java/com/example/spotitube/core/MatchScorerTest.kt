@@ -102,7 +102,7 @@ class MatchScorerTest {
       )
     val match = MatchScorer.score(rickAstley, compilation)
     assertFalse(match.explain(), match.vetoed)
-    assertTrue(match.score >= MatchScorer.CONFIDENCE_THRESHOLD)
+    assertTrue(match.explain(), match.core >= MatchScorer.CONFIDENCE_THRESHOLD)
   }
 
   @Test
@@ -219,7 +219,8 @@ class MatchScorerTest {
     val match = MatchScorer.score(rickAstley, faceless)
     assertTrue(match.explain(), match.vetoed)
     assertTrue(match.vetoes.contains("artist-unknown"))
-    assertEquals(0.0, match.score, 1e-9)
+    assertEquals("a veto zeroes the evidence score", 0.0, match.core, 1e-9)
+    assertEquals("and the ordering score with it", 0.0, match.rank, 1e-9)
   }
 
   // --- end-to-end ranking against the real search results ------------------------------------
@@ -297,7 +298,7 @@ class MatchScorerTest {
     val outcome = MatchScorer.best(meta, candidates)
     val top = outcome.ranked[0]
     val rival = outcome.ranked[1]
-    assertTrue("rank gap should exceed the margin: ${top.explain()} vs ${rival.explain()}", top.score - rival.score > 0.02)
+    assertTrue("rank gap should exceed the margin: ${top.explain()} vs ${rival.explain()}", top.rank - rival.rank > 0.02)
     assertTrue("expected ambiguity despite the rank gap", outcome.ambiguous)
     assertFalse(outcome.confident)
   }
@@ -439,7 +440,7 @@ class MatchScorerTest {
         song(title = "Never Gonna Give You Up", artists = listOf("Rick Astley"), duration = 214),
       )
     assertFalse(match.vetoed)
-    assertTrue("score was ${match.score}", match.score > 0.95)
+    assertTrue("rank was ${match.rank}", match.rank > 0.95)
   }
 
   @Test
@@ -450,7 +451,7 @@ class MatchScorerTest {
         song(title = "Never Gonna Give You Up (2022 Remaster)", artists = listOf("Rick Astley"), duration = 214),
       )
     assertFalse("remaster must not be vetoed: ${match.explain()}", match.vetoed)
-    assertTrue("score was ${match.score}", match.score >= MatchScorer.CONFIDENCE_THRESHOLD)
+    assertTrue("core was ${match.core}", match.core >= MatchScorer.CONFIDENCE_THRESHOLD)
   }
 
   @Test
@@ -464,7 +465,7 @@ class MatchScorerTest {
       )) {
       val match = MatchScorer.score(rickAstley, song(title = title, artists = listOf("Rick Astley"), duration = 214))
       assertFalse("$title must not be vetoed: ${match.explain()}", match.vetoed)
-      assertTrue("$title scored ${match.score}", match.score >= MatchScorer.CONFIDENCE_THRESHOLD)
+      assertTrue("$title scored ${match.explain()}", match.core >= MatchScorer.CONFIDENCE_THRESHOLD)
     }
   }
 
@@ -487,7 +488,8 @@ class MatchScorerTest {
       // Same artist, same duration: only the variant keyword may reject these.
       val match = MatchScorer.score(rickAstley, song(title = title, artists = listOf("Rick Astley"), duration = 214))
       assertTrue("$title should be vetoed but was ${match.explain()}", match.vetoed)
-      assertEquals(0.0, match.score, 1e-9)
+      assertEquals(title, 0.0, match.core, 1e-9)
+      assertEquals(title, 0.0, match.rank, 1e-9)
     }
   }
 
@@ -498,7 +500,7 @@ class MatchScorerTest {
     val match =
       MatchScorer.score(liveAndLetDie, song(title = "Live and Let Die", artists = listOf("Wings"), duration = 191))
     assertFalse("must not veto on the word 'live' in the real title: ${match.explain()}", match.vetoed)
-    assertTrue(match.score >= MatchScorer.CONFIDENCE_THRESHOLD)
+    assertTrue(match.explain(), match.core >= MatchScorer.CONFIDENCE_THRESHOLD)
   }
 
   @Test
@@ -520,7 +522,7 @@ class MatchScorerTest {
         song(title = "Never Gonna Give You Up", artists = listOf("Rick Astley"), duration = 214 + 4),
       )
     assertFalse(match.explain(), match.vetoed)
-    assertTrue(match.score >= MatchScorer.CONFIDENCE_THRESHOLD)
+    assertTrue(match.explain(), match.core >= MatchScorer.CONFIDENCE_THRESHOLD)
   }
 
   @Test
@@ -625,7 +627,7 @@ class MatchScorerTest {
         song(title = "Some Song", artists = listOf("Some Artist"), duration = null),
       )
     assertFalse(match.vetoed)
-    assertTrue(match.score > MatchScorer.CONFIDENCE_THRESHOLD)
+    assertTrue(match.explain(), match.core > MatchScorer.CONFIDENCE_THRESHOLD)
   }
 
   /** Not an assertion — prints the calibration table that the threshold was chosen from. */

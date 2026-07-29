@@ -113,7 +113,8 @@ class JapaneseTrackMatchingTest {
     val other = ranked.first { it.song.videoId == "0EuC4jUbITA" }
     assertEquals("新宝島 - Shin Takara Jima", other.song.title)
     assertTrue("must stay vetoed: ${other.explain()}", other.vetoed)
-    assertEquals(0.0, other.score, 1e-9)
+    assertEquals(0.0, other.core, 1e-9)
+    assertEquals(0.0, other.rank, 1e-9)
   }
 
   @Test
