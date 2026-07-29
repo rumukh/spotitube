@@ -452,7 +452,7 @@ class LatestLinkCoordinatorTest {
   // --- 6. the settle window ----------------------------------------------------------------------
 
   @Test
-  fun `an isolated request delivers after the settle window`() = runTest {
+  fun `OPTIONAL MECHANISM - an isolated request delivers after an injected window`() = runTest {
     val h = Harness(TestScope(testScheduler), settleWindowMillis = 500L)
     val a = h.submit("A")
     h.resolveNow("A") // resolves immediately; the window has not elapsed
@@ -466,7 +466,7 @@ class LatestLinkCoordinatorTest {
   }
 
   @Test
-  fun `a second tap inside the window suppresses the first`() = runTest {
+  fun `OPTIONAL MECHANISM - a second tap inside an injected window suppresses the first`() = runTest {
     // The case arbitration alone provably cannot fix: without the window, A would already have
     // launched before B existed, and no token can undo a launch that has happened.
     val h = Harness(TestScope(testScheduler), settleWindowMillis = 500L)
@@ -483,7 +483,7 @@ class LatestLinkCoordinatorTest {
   }
 
   @Test
-  fun `two taps beyond the window are two separate actions`() = runTest {
+  fun `OPTIONAL MECHANISM - two taps beyond an injected window are two separate actions`() = runTest {
     val h = Harness(TestScope(testScheduler), settleWindowMillis = 500L)
     h.submit("A")
     h.resolveNow("A")
@@ -497,7 +497,7 @@ class LatestLinkCoordinatorTest {
   }
 
   @Test
-  fun `the window is absorbed entirely when resolving takes longer`() = runTest {
+  fun `OPTIONAL MECHANISM - an injected window is absorbed entirely when resolving takes longer`() = runTest {
     val h = Harness(TestScope(testScheduler), settleWindowMillis = 500L)
     h.submit("A")
     // Resolve returns at 900ms, well past the window, so the window adds no delay of its own.
