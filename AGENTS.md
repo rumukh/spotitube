@@ -781,6 +781,25 @@ our own in-app buttons.
   JSON in code shared with JVM unit tests, where `org.json` is a throwing stub.
 * The template's Navigation-3 dependencies can be deleted outright if you do not use them.
 
+### A `cancelled` CI run is not a failed one
+
+Pushing again while a run is in flight **cancels** the earlier run. The badge on that commit then
+reads `cancelled`, which looks like a red build in `gh run list` and in the commit list, and was
+twice reported as CI breakage when nothing had broken.
+
+It is not a failure and it does not leave a commit unverified: the superseding run builds a tree
+that **contains** the cancelled commit, so a green run covers every commit beneath it. Check the
+run whose `headSha` is at or above the commit you care about, not the one that carries its name:
+
+```powershell
+gh run list --limit 5 --json headSha,status,conclusion,displayTitle
+git --no-pager log --oneline <cancelled-sha>..origin/master   # empty or ancestors ⇒ covered
+```
+
+Only treat CI as red when a run reaches `conclusion: failure`. If you want a specific commit built
+in its own right — for a pinned artifact, say — push it alone and let the run finish before the
+next push.
+
 ### Measured timings on this machine
 
 | Task | Time |
