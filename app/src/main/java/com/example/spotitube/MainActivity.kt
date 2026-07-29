@@ -50,6 +50,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.spotitube.core.LinkHandling
+import com.example.spotitube.core.LinkHandlingCopy
 import com.example.spotitube.core.ResolveOutcome
 import com.example.spotitube.core.SpotifyLinkParser
 import com.example.spotitube.theme.SpotitubeTheme
@@ -172,50 +173,11 @@ private fun HomeScreen() {
 
     Card(modifier = Modifier.fillMaxWidth()) {
       Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Make tapping links work", style = MaterialTheme.typography.titleMedium)
-        when (linkHandling) {
-          LinkHandling.NOT_REPORTABLE ->
-            Text(
-              "On this Android version, tapping a Spotify link should offer Spotitube in the " +
-                "\"Open with\" list. If it does not, use the copy method below.",
-              style = MaterialTheme.typography.bodySmall,
-            )
-          LinkHandling.ENABLED ->
-            Text(
-              "Set up. Tapping a Spotify link opens Spotitube, in apps that hand links to " +
-                "Android. Some apps open links in their own built-in browser instead — " +
-                "Telegram's \"Open In-App\" is one — and those bypass this setting entirely. Use " +
-                "the copy method below when that happens.",
-              style = MaterialTheme.typography.bodySmall,
-            )
-          LinkHandling.BLOCKED_BY_SPOTIFY ->
-            Text(
-              "This is the one setup worth doing: once it is done, tapping a Spotify link opens " +
-                "it here, in apps that hand links to Android.\n\n" +
-                "Spotify owns spotify.com, so Android has given those links to the Spotify app, " +
-                "and only one app can hold them. Handing them over takes two steps:\n\n" +
-                "1. In Spotify's settings, turn OFF \"Open supported links\".\n" +
-                "2. Back in Spotitube's settings, turn ON \"Open supported links\" and tick the " +
-                "spotify.com addresses.\n\n" +
-                "If you would rather not change Spotify's settings, the copy method below works " +
-                "with no setup at all.",
-              style = MaterialTheme.typography.bodySmall,
-            )
-          LinkHandling.AVAILABLE ->
-            Text(
-              "This is the one setup worth doing: once it is done, tapping a Spotify link opens " +
-                "it here, in apps that hand links to Android.\n\n" +
-                if (spotifyInstalled) {
-                  "Spotify is no longer holding these links, so this is now a single step: tap " +
-                    "below, turn on \"Open supported links\", and tick the Spotify addresses."
-                } else {
-                  "Android 12 and newer only open web links in an app automatically if that app " +
-                    "owns the website, and we do not own spotify.com. Tap below, turn on " +
-                    "\"Open supported links\", and tick the Spotify addresses."
-                },
-              style = MaterialTheme.typography.bodySmall,
-            )
-        }
+        // Heading and body both depend on the state: ENABLED deliberately has no button, so an
+        // imperative heading there reads as an instruction whose action is missing.
+        val handlingCopy = LinkHandlingCopy.of(linkHandling, spotifyInstalled)
+        Text(handlingCopy.title, style = MaterialTheme.typography.titleMedium)
+        Text(handlingCopy.body, style = MaterialTheme.typography.bodySmall)
 
         if (linkHandling == LinkHandling.BLOCKED_BY_SPOTIFY) {
           OutlinedButton(onClick = { openLinkSettings(context, LaunchIntents.SPOTIFY_PACKAGE) }) {
