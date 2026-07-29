@@ -292,7 +292,22 @@ directions. Explicit staging does **not** protect you; `git commit --only <paths
 
 ### Never state another session's HEAD from a message; read it from git
 
-Cross-session messages arrive **minutes late and out of order**, and replies routinely cross.
+Cross-session messages arrive **late and out of order**, and replies routinely cross. The delay
+has been **measured, not estimated**: one ruling was sent at 21:53:29, superseded by its author at
+22:12:16, and delivered to the implementing session at **23:33:22** — a delivery delay of
+**1 h 39 m 53 s**, by which point the instruction had been obsolete for **1 h 21 m**. It was matched
+byte-for-byte between the sender's `events.jsonl` and the receiver's session store, so this is
+measured out-of-order delivery rather than anyone misremembering. The implementer did exactly as
+instructed and the work still had to be reverted (`56edd56` → `42447ed`).
+
+Two consequences, and the second is the one people skip:
+
+* **A superseding decision must be written to git.** A correction sent only as a message may be
+  overtaken by the very instruction it corrects.
+* **Before acting on a queued message, verify current git state.** Not just for state claims — for
+  *instructions*. "Implement X" can be an hour and a half stale on arrival, and nothing in the
+  message will say so. Prefer implementing from the decider's own commit over a relay of it.
+
 On 2026-07-29 all three sessions independently accused each other of stale baselines, and every
 one of those accusations was itself stale by the time it arrived. Two rounds were also spent
 disputing a test count (11 vs 12 vs 16) that no one had measured — `(Select-String '@Test').Count`
